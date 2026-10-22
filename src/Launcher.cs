@@ -14,6 +14,10 @@ namespace Wslbin
     // touched: the child inherits the console, so TUIs, colours, pipes and Ctrl+C work.
     internal static class Launcher
     {
+        // Set only by the entry point of the test build (tests/FakeWslEntry.cs), which puts a stand-in
+        // for wsl.exe here; wslbin.exe is built without that file and always runs the real one.
+        internal static string WslPathOverride = null;
+
         public static int Run(Config cfg, string script, IList<string> positional, EnvPlan env)
         {
             var psi = new ProcessStartInfo(FindWsl(), WslArguments(cfg, script, positional));
@@ -23,7 +27,17 @@ namespace Wslbin
             // on a thread of its own, possibly after wsl.exe has ended, and must not end it before it hands
             // back the exit code of the utility.
             Console.CancelKeyPress += delegate(object sender, ConsoleCancelEventArgs e) { e.Cancel = true; };
-            return RunInConsole(psi);
+            int code = RunInConsole(psi);
+
+            // Without WSL, wsl.exe answers with its usage text and an exit code (1 on Windows 10) that a
+            // script would take for the utility's own. With no distribution there was no utility.
+            if (code != 0 && !WslQuery.HasDistribution())
+            {
+                Out.Error("wslbin: WSL is not installed, or has no distribution, so wsl.exe answered instead of " +
+                          "running the command (fix: " + WslQuery.InstallFix + ")");
+                return ExitCodes.Failed;
+            }
+            return code;
         }
 
         // The folder this process runs in, or null in the unlikely case that it cannot be read.
@@ -71,12 +85,13 @@ namespace Wslbin
 
         internal static string FindWsl()
         {
+            if (WslPathOverride != null) return WslPathOverride;
             string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
             // A 32-bit process would be sent to SysWOW64, which has no wsl.exe.
             string system32 = !Environment.Is64BitProcess && Environment.Is64BitOperatingSystem ? "Sysnative" : "System32";
             string path = Path.Combine(Path.Combine(windows, system32), "wsl.exe");
             if (!File.Exists(path))
-                throw new WslbinException("wsl.exe not found, so WSL is not installed (fix: run 'wsl --install' as administrator)");
+                throw new WslbinException("wsl.exe not found, so WSL is not installed (fix: " + WslQuery.InstallFix + ")");
             return path;
         }
 

@@ -18,6 +18,7 @@ function Remove-WslbinTest {
 # Runs a copy of wslbin.exe named "$Name.exe" (the utility), with its own wslbin.ini if $Ini is given.
 # Without -Dir every call gets a folder of its own; with -Dir the folder is reused (and the copy is
 # made only when it is missing). Returns stdout, stderr (both UTF-8), the exit code and the folder.
+# -From names another build to copy (the one of Initialize-FakeWsl).
 function Invoke-Wslbin {
     param(
         [string]$Name = 'tool',
@@ -27,14 +28,15 @@ function Invoke-Wslbin {
         [string]$InputText,
         [string]$WorkingDirectory,
         [string]$Dir,
-        [switch]$IniWithBom
+        [switch]$IniWithBom,
+        [string]$From = $global:WslbinTest.Exe
     )
     if (-not $Dir) {
         $Dir = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $Dir | Out-Null
     }
     $exe = Join-Path $Dir "$Name.exe"
-    if (-not (Test-Path $exe)) { Copy-Item $global:WslbinTest.Exe $exe }
+    if (-not (Test-Path $exe)) { Copy-Item $From $exe }
     if ($PSBoundParameters.ContainsKey('Ini')) {
         [IO.File]::WriteAllText((Join-Path $Dir 'wslbin.ini'), $Ini, [Text.UTF8Encoding]::new([bool]$IniWithBom))
     }
@@ -67,6 +69,46 @@ function Invoke-Wslbin {
         Dir      = $Dir
     }
 }
+
+# A test build of wslbin whose wsl.exe is a stand-in (tests\FakeWslEntry.cs), and the stand-in
+# (tests\FakeWsl.cs): $global:WslbinTest.FakeExe and .FakeWsl. Neither needs WSL.
+function Initialize-FakeWsl {
+    $repo = $global:WslbinTest.Repo
+    $dir = Join-Path $global:WslbinTest.Work 'fake-wsl-build'
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $exe = Join-Path $dir 'wslbin.exe'
+    & (Join-Path $repo 'build.ps1') -Output $exe -ExtraSource (Join-Path $repo 'tests\FakeWslEntry.cs') -Main 'Wslbin.FakeWslEntry' 6>$null
+    $wsl = Join-Path $dir 'wsl.exe'
+    $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    & $csc /nologo "/out:$wsl" (Join-Path $repo 'tests\FakeWsl.cs') | Out-Null
+    if (-not (Test-Path $exe) -or -not (Test-Path $wsl)) { throw 'the test build with a stand-in for wsl.exe failed' }
+    $global:WslbinTest.FakeExe = $exe
+    $global:WslbinTest.FakeWsl = $wsl
+}
+
+# A folder with the answers of the stand-in wsl.exe (file names as in tests\FakeWsl.cs). An array is
+# written as bytes (a function hands a byte[] over as object[]), anything else as UTF-8 text. Returns
+# the environment for Invoke-Wslbin -Env, with a PATH that has nothing of this machine's programs in it
+# (--link checks names against PATH).
+function New-FakeWsl {
+    param([hashtable]$Files = @{}, [bool]$HasDistribution = $true)
+    $dir = Join-Path $global:WslbinTest.Work ('fake-wsl-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    foreach ($name in $Files.Keys) {
+        $value = $Files[$name]
+        if ($value -is [array]) { [IO.File]::WriteAllBytes((Join-Path $dir $name), [byte[]]$value) }
+        else { [IO.File]::WriteAllText((Join-Path $dir $name), [string]$value, [Text.UTF8Encoding]::new($false)) }
+    }
+    @{
+        WSLBIN_TEST_WSL     = $global:WslbinTest.FakeWsl
+        WSLBIN_TEST_DISTROS = $(if ($HasDistribution) { '1' } else { '0' })
+        FAKE_WSL_DIR        = $dir
+        PATH                = "$env:SystemRoot\System32"
+    }
+}
+
+# Text as wsl.exe writes its own messages: UTF-16.
+function ConvertTo-Utf16 ([string]$Text) { [Text.Encoding]::Unicode.GetBytes($Text) }
 
 # The bash command that --wslbin-explain prints, without the final newline.
 function Get-Explain {
