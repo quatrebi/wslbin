@@ -594,6 +594,26 @@ Describe 'real WSL' -Tag 'WSL' -Skip:$NoWsl {
         $r.Out.Replace("`r", '').TrimEnd("`n") | Should -BeExactly $want
     }
 
+    It 'stops the Linux program when the wrapper is stopped' {
+        $seconds = 4000 + (Get-Random -Maximum 900)          # a duration of its own, to find this sleep and no other
+        $dir = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        Copy-Item $global:WslbinTest.Exe (Join-Path $dir 'sleep.exe')
+        $psi = [Diagnostics.ProcessStartInfo]::new((Join-Path $dir 'sleep.exe'))
+        $psi.ArgumentList.Add("$seconds")
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardInput = $true
+        $wrapper = [Diagnostics.Process]::Start($psi)
+        $count = { ((& wsl.exe --exec bash --noprofile --norc -c "pgrep -xf 'sleep $seconds' | wc -l") -join '').Trim() }
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((& $count) -ne '1' -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+        & $count | Should -BeExactly '1'
+        $wrapper.Kill()
+        $deadline = (Get-Date).AddSeconds(10)
+        while ((& $count) -ne '0' -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+        & $count | Should -BeExactly '0'
+    }
+
     # What the text for agents says about reading non-ASCII output in PowerShell.
     It 'gives PowerShell the output of a utility in UTF-8, which it reads after [Console]::OutputEncoding is set' {
         $dir = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))

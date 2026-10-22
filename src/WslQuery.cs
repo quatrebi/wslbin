@@ -119,6 +119,7 @@ namespace Wslbin
             {
                 using (Process process = Process.Start(psi))
                 {
+                    ChildJob.Add(process);
                     process.StandardInput.Close();
                     Task<byte[]> error = ReadAllAsync(process.StandardError.BaseStream);
                     Task<byte[]> output = ReadAllAsync(process.StandardOutput.BaseStream);

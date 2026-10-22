@@ -76,6 +76,28 @@ Describe 'WSL is not installed: wsl.exe answers with its usage text' {
     }
 }
 
+Describe 'a wsl.exe that does not answer, or a wrapper that is stopped' {
+
+    It 'stops wsl.exe when the wrapper is stopped (by a timeout of its caller, say)' {
+        $wsl = New-FakeWsl -Files @{ 'run.sleep' = '60000' }
+        $dir = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        Copy-Item $global:WslbinTest.FakeExe (Join-Path $dir 'sleep.exe')
+        $psi = [Diagnostics.ProcessStartInfo]::new((Join-Path $dir 'sleep.exe'))
+        $psi.ArgumentList.Add('60')
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardInput = $true
+        foreach ($key in $wsl.Keys) { $psi.Environment[$key] = $wsl[$key] }
+        $wrapper = [Diagnostics.Process]::Start($psi)
+        $pidFile = Join-Path $wsl.FAKE_WSL_DIR 'pid.txt'
+        $deadline = (Get-Date).AddSeconds(20)
+        while (-not (Test-Path $pidFile) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+        $fake = Get-Process -Id ([int](Get-Content $pidFile))
+        $wrapper.Kill()
+        $fake.WaitForExit(10000) | Should -BeTrue -Because 'wsl.exe must not outlive the wrapper'
+    }
+}
+
 Describe 'a drive that WSL has not mounted' -Skip:$NoGitBash {
     # wsl.exe cannot enter a folder of such a drive (subst, a network drive): it says "Failed to
     # translate" and starts the command in the Linux home folder. The script that wslbin hands to

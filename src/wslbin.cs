@@ -10,7 +10,8 @@
 //   Paths.cs            Paths: Windows path -> Linux path
 //   Bash.cs             Bash: one argument -> one bash word (smart / sh / raw)
 //   EnvPlan.cs          EnvPlan: Windows variables handed to Linux through WSLENV
-//   Launcher.cs         Launcher: wsl.exe command line, starting a child in the console, exit codes
+//   Launcher.cs         Launcher: wsl.exe command line, starting a child in the console, exit codes;
+//                       ChildJob: ending wsl.exe when wslbin ends
 //   WslQuery.cs         WslQuery: what wslbin learns about WSL (wsl.exe calls whose output it reads, the registry)
 //   Out.cs              Out: console output that does not depend on the console code page
 

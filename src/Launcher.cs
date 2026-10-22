@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Wslbin
@@ -98,6 +99,7 @@ namespace Wslbin
             {
                 using (Process process = Process.Start(psi))
                 {
+                    ChildJob.Add(process);
                     process.WaitForExit();
                     return MapExitCode(process.ExitCode);
                 }
@@ -201,6 +203,85 @@ namespace Wslbin
             // Backslashes before the closing quote are doubled so that they do not escape it.
             sb.Append('\\', backslashes * 2);
             sb.Append('"');
+        }
+    }
+
+    // A job object that ends what is in it when wslbin ends, however it ends: a caller that stops a
+    // wrapper (a timeout in a script, the stop button of an IDE) stops wsl.exe with it, and when wsl.exe
+    // ends, so does the Linux program (checked). Without it both would go on running and keep the
+    // caller's pipes open. Only wsl.exe itself is put in: what it starts may leave the job (silent
+    // breakaway), so a Windows program that the Linux one opened stays open.
+    internal static class ChildJob
+    {
+        const int ExtendedLimitInformation = 9;
+        const uint KillOnJobClose = 0x2000;
+        const uint SilentBreakawayOk = 0x1000;
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct BasicLimits
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct ExtendedLimits
+        {
+            public BasicLimits Basic;
+            public ulong ReadOperations, WriteOperations, OtherOperations, ReadBytes, WriteBytes, OtherBytes;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref ExtendedLimits info, int length);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        [DllImport("kernel32.dll")]
+        static extern bool CloseHandle(IntPtr handle);
+
+        // Never closed by wslbin: Windows closes it when this process ends, and that is what ends the job.
+        // Not inheritable, or wsl.exe would hold it open itself.
+        static IntPtr job;
+
+        // A failure here is not an error: the child then does not end with wslbin, as it never used to.
+        public static void Add(Process process)
+        {
+            if (job == IntPtr.Zero)
+            {
+                IntPtr created = CreateJobObject(IntPtr.Zero, null);
+                if (created == IntPtr.Zero) return;
+                var limits = new ExtendedLimits();
+                limits.Basic.LimitFlags = KillOnJobClose | SilentBreakawayOk;
+                if (!SetInformationJobObject(created, ExtendedLimitInformation, ref limits, Marshal.SizeOf(typeof(ExtendedLimits))))
+                {
+                    CloseHandle(created);
+                    return;
+                }
+                job = created;
+            }
+            try
+            {
+                AssignProcessToJobObject(job, process.Handle);
+            }
+            catch (InvalidOperationException)
+            {
+                // it has ended already
+            }
         }
     }
 }
