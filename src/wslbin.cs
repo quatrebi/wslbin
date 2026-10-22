@@ -7,6 +7,7 @@
 //   wslbin.cs           Program: the entry point, the command line of wrapper copies and wslbin's own
 //                       commands; the version (the assembly attributes below)
 //   Config.cs           Config: wslbin.ini next to the .exe
+//   Paths.cs            Paths: Windows path -> Linux path
 //   Bash.cs             Bash: one argument -> one bash word (smart / sh / raw)
 //   Launcher.cs         Launcher: wsl.exe command line, starting a child in the console, exit codes
 //   Out.cs              Out: console output that does not depend on the console code page
@@ -245,7 +246,8 @@ namespace Wslbin
         static string Word(ArgMode mode, string arg, Config cfg)
         {
             if (mode == ArgMode.Raw) return Bash.Literal(arg);
-            return mode == ArgMode.Sh ? Bash.Sh(arg) : Bash.Smart(arg);
+            string translated = Paths.TranslateCommandArg(arg, cfg, Out.Warn);
+            return mode == ArgMode.Sh ? Bash.Sh(translated) : Bash.Smart(translated);
         }
     }
 }

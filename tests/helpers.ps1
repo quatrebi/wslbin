@@ -76,6 +76,12 @@ function Get-Explain {
     (Invoke-Wslbin @splat).Out.TrimEnd("`n")
 }
 
+# The bash command for one argument, with wslbin started in the given folder (relative paths depend on it).
+function Get-RelExplain {
+    param([string]$Argument, [string]$In, [string[]]$Flags = @())
+    (Invoke-Wslbin -WorkingDirectory $In -Arguments (@('--wslbin-explain') + $Flags + @($Argument))).Out.TrimEnd("`n")
+}
+
 # A directory on the Windows side with a few files, for tests of wildcards and paths.
 function New-FileDir {
     param([string[]]$Files)

@@ -25,6 +25,14 @@ namespace Wslbin
             return RunInConsole(psi);
         }
 
+        // The folder this process runs in, or null in the unlikely case that it cannot be read.
+        internal static string CurrentFolder()
+        {
+            try { return Directory.GetCurrentDirectory(); }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
+        }
+
         // Runs a child that shares the console and returns its exit code.
         public static int RunInConsole(ProcessStartInfo psi)
         {

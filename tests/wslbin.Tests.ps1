@@ -84,6 +84,30 @@ BeforeDiscovery {
         @{ Arg = '~~';              Want = '~\~' }
     )
 
+    $PathCases = @(
+        @{ Arg = 'C:\x\y';                                   Want = '/mnt/c/x/y' }
+        @{ Arg = 'c:/x/y';                                   Want = '/mnt/c/x/y' }
+        @{ Arg = 'C:\x/y\z';                                 Want = '/mnt/c/x/y/z' }
+        @{ Arg = 'C:\';                                      Want = '/mnt/c/' }
+        @{ Arg = 'C:\backup\';                               Want = '/mnt/c/backup/' }
+        @{ Arg = 'D:\a b\c';                                 Want = '/mnt/d/a\ b/c' }
+        @{ Arg = 'C:\proj\*.log';                            Want = '/mnt/c/proj/*.log' }
+        @{ Arg = '--file=D:\a';                              Want = '--file=/mnt/d/a' }
+        @{ Arg = 'OUT=C:\out';                               Want = 'OUT=/mnt/c/out' }
+        @{ Arg = '-IC:\inc';                                 Want = '-I/mnt/c/inc' }
+        @{ Arg = '\\?\C:\long\path';                         Want = '/mnt/c/long/path' }
+        @{ Arg = '\\wsl.localhost\Ubuntu\home\u\f';          Want = '/home/u/f' }
+        @{ Arg = '\\wsl$\Ubuntu\etc\hosts';                  Want = '/etc/hosts' }
+        @{ Arg = '\\wsl.localhost\Ubuntu';                   Want = '/' }
+        # not paths, or not absolute: left alone (and escaped like any other text)
+        @{ Arg = 'src\main.c';                               Want = 'src\\main.c' }
+        @{ Arg = '.\a';                                      Want = '.\\a' }
+        @{ Arg = 'https://example.com/a';                    Want = 'https://example.com/a' }
+        @{ Arg = 's:a:b:';                                   Want = 's:a:b:' }
+        @{ Arg = 'C:';                                       Want = 'C:' }
+        @{ Arg = '-C:\x';                                    Want = '-C:\\x' }
+    )
+
     $ShCases = @(
         @{ Arg = '$HOME';                          Want = '"$HOME"' }
         @{ Arg = 'OUT=$HOME/out';                  Want = '"OUT=$HOME/out"' }
@@ -98,6 +122,7 @@ BeforeDiscovery {
         @{ Arg = 'a"b$c';                          Want = '"a\"b$c"' }
         @{ Arg = 'a\b$c';                          Want = '"a\\b$c"' }
         @{ Arg = '~/$X';                           Want = '~/"$X"' }
+        @{ Arg = 'C:\x\$HOME';                     Want = '"/mnt/c/x/$HOME"' }
         # no $ or ` in the argument: same as the smart mode
         @{ Arg = 'a;b';                            Want = 'a\;b' }
         @{ Arg = '*.log';                          Want = '*.log' }
@@ -132,6 +157,118 @@ Describe 'smart mode: escaping' {
 
     It 'keeps a newline inside quotes, where a backslash would swallow it' {
         Get-Explain -Arguments @("a`nb") | Should -BeExactly "tool a'`n'b"
+    }
+
+    It 'joins several arguments with single spaces' {
+        Get-Explain -Arguments @('-av', '*.log', 'C:\backup\') | Should -BeExactly 'tool -av *.log /mnt/c/backup/'
+    }
+}
+
+Describe 'smart mode: Windows paths' {
+    It "<Arg> -> <Want>" -ForEach $PathCases {
+        Get-Explain -Arguments @($Arg) | Should -BeExactly "tool $Want"
+    }
+
+    It 'warns about, and leaves alone, a network path' {
+        $r = Invoke-Wslbin -Arguments @('--wslbin-explain', '\\server\share\x')
+        $r.Out | Should -BeExactly "tool \\\\server\\share\\x`n"
+        $r.Err | Should -Match 'network path'
+        $r.ExitCode | Should -Be 0
+    }
+
+    It 'warns about a path relative to a drive' {
+        $r = Invoke-Wslbin -Arguments @('--wslbin-explain', 'C:x')
+        $r.Out | Should -BeExactly "tool C:x`n"
+        $r.Err | Should -Match 'relative to a drive'
+    }
+
+    It 'does not warn about sed-like arguments' {
+        (Invoke-Wslbin -Arguments @('--wslbin-explain', 's:a:b:')).Err | Should -BeNullOrEmpty
+    }
+
+    It 'leaves a WSL path of another distribution alone when a distribution is configured' {
+        $r = Invoke-Wslbin -Ini 'distro = Ubuntu' -Arguments @('--wslbin-explain', '\\wsl.localhost\Other\x', '\\wsl.localhost\ubuntu\x')
+        $r.Out | Should -BeExactly "tool \\\\wsl.localhost\\Other\\x /x`n"
+        $r.Err | Should -Match "distribution 'Other'"
+    }
+
+    It 'reads the path in --opt=value and in a glued -Ipath only when the rest is a path' {
+        Get-Explain -Arguments @('--name=C:', '-Ifoo', '--k=v=C:\x') | Should -BeExactly 'tool --name=C: -Ifoo --k=v=C:\\x'
+    }
+}
+
+# A relative path with backslashes is translated only when it exists in the folder the child starts in
+# (DECISIONS.md section 14). The check is made on Windows; --wslbin-explain needs no WSL for it.
+Describe 'smart mode: relative paths' {
+    BeforeAll {
+        $script:Rel = Join-Path $global:WslbinTest.Work ('rel-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $script:Rel 'sub dir') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $script:Rel 'a.txt'), "x`n")
+        [IO.File]::WriteAllText((Join-Path $script:Rel 'sub dir\b.c'), "x`n")
+        $script:Elsewhere = Join-Path $global:WslbinTest.Work ('elsewhere-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:Elsewhere | Out-Null
+    }
+
+    It "<Arg> exists -> <Want>" -ForEach @(
+        @{ Arg = '.\a.txt';            Want = 'tool ./a.txt' }
+        @{ Arg = '.\sub dir';          Want = 'tool ./sub\ dir' }
+        @{ Arg = '.\sub dir\';         Want = 'tool ./sub\ dir/' }
+        @{ Arg = '.\sub dir\b.c';      Want = 'tool ./sub\ dir/b.c' }
+        @{ Arg = 'sub dir\b.c';        Want = 'tool sub\ dir/b.c' }
+        @{ Arg = '.\sub dir\..\a.txt'; Want = 'tool ./sub\ dir/../a.txt' }
+        @{ Arg = '--file=.\a.txt';     Want = 'tool --file=./a.txt' }
+        @{ Arg = 'OUT=.\sub dir\b.c';  Want = 'tool OUT=./sub\ dir/b.c' }
+        @{ Arg = '-I.\sub dir';        Want = 'tool -I./sub\ dir' }
+    ) {
+        Get-RelExplain $Arg $script:Rel | Should -BeExactly $Want
+    }
+
+    It 'translates ..\ against the folder the child starts in' {
+        Get-RelExplain '..\a.txt' (Join-Path $script:Rel 'sub dir') | Should -BeExactly 'tool ../a.txt'
+        Get-RelExplain '..\' (Join-Path $script:Rel 'sub dir') | Should -BeExactly 'tool ../'
+    }
+
+    It "<Arg> does not exist (or is not a relative path) -> unchanged" -ForEach @(
+        @{ Arg = '.\d+';            Want = 'tool .\\d+' }
+        @{ Arg = '.\new.txt';       Want = 'tool .\\new.txt' }
+        @{ Arg = '.\*.txt';         Want = 'tool .\\*.txt' }
+        @{ Arg = '.\sub dir\new';   Want = 'tool .\\sub\ dir\\new' }
+        @{ Arg = '--file=.\new';    Want = 'tool --file=.\\new' }
+        @{ Arg = '\a.txt';          Want = 'tool \\a.txt' }
+        @{ Arg = '\sub dir\b.c';    Want = 'tool \\sub\ dir\\b.c' }
+        @{ Arg = '~\a.txt';         Want = 'tool ~\\a.txt' }
+        @{ Arg = 'a.txt:stream';    Want = 'tool a.txt:stream' }
+        # Windows would look past spaces and dots at the ends of a name (" \" is the root, "a.txt." is a.txt)
+        @{ Arg = ' \';              Want = 'tool \ \\' }
+        @{ Arg = '--k= \';          Want = 'tool --k=\ \\' }
+        @{ Arg = ' .\a.txt';        Want = 'tool \ .\\a.txt' }
+        @{ Arg = '.\a.txt ';        Want = 'tool .\\a.txt\ ' }
+        @{ Arg = '.\a.txt.';        Want = 'tool .\\a.txt.' }
+        @{ Arg = '.\sub dir.\b.c';  Want = 'tool .\\sub\ dir.\\b.c' }
+        @{ Arg = '.\ \';            Want = 'tool .\\\ \\' }
+    ) {
+        Get-RelExplain $Arg $script:Rel | Should -BeExactly $Want
+    }
+
+    It 'looks in the folder of the child, not in the one where a file of that name happens to be' {
+        Get-RelExplain '.\a.txt' $script:Elsewhere | Should -BeExactly 'tool .\\a.txt'
+    }
+
+    It 'follows the mode: sh translates, raw never does' {
+        Get-RelExplain '.\a.txt' $script:Rel -Flags '--wslbin-sh' | Should -BeExactly 'tool ./a.txt'
+        Get-RelExplain '.\a.txt' $script:Rel -Flags '--wslbin-raw' | Should -BeExactly "tool '.\a.txt'"
+    }
+
+    It 'says nothing on standard error' {
+        (Invoke-Wslbin -WorkingDirectory $script:Rel -Arguments @('--wslbin-explain', '.\a.txt', '.\nope')).Err | Should -BeNullOrEmpty
+    }
+
+    It 'does not trip over names that Windows cannot have as files' -ForEach @(
+        @{ Arg = '.\' + [string][char]1 }, @{ Arg = '.\"' }, @{ Arg = '.\|' }, @{ Arg = '.\?' }, @{ Arg = '.\nul' }, @{ Arg = '.\con' }
+    ) {
+        $r = Invoke-Wslbin -WorkingDirectory $script:Rel -Arguments @('--wslbin-explain', $Arg)
+        $r.ExitCode | Should -Be 0 -Because $r.Err
+        $r.Out | Should -Not -Match '\./'
     }
 }
 
@@ -304,6 +441,11 @@ Describe 'wslbin.exe itself' {
         $r.Err | Should -Match 'Usage'
     }
 
+    It 'runs any utility: wslbin <utility> <arguments>' {
+        (Invoke-Wslbin -Name 'wslbin' -Arguments @('--explain', 'rsync', '-av', 'C:\x', '*.log')).Out |
+            Should -BeExactly "rsync -av /mnt/c/x *.log`n"
+    }
+
     It 'takes --raw and --sh before the utility' {
         (Invoke-Wslbin -Name 'wslbin' -Arguments @('--explain', '--raw', 'grep', 'a*')).Out | Should -BeExactly "grep 'a*'`n"
         (Invoke-Wslbin -Name 'wslbin' -Arguments @('--sh', '--explain', 'make', 'V=$X')).Out | Should -BeExactly "make `"V=`$X`"`n"
@@ -311,6 +453,10 @@ Describe 'wslbin.exe itself' {
 
     It 'hands a whole string to bash with -c' {
         (Invoke-Wslbin -Name 'wslbin' -Arguments @('--explain', '-c', 'ls *.log | wc -l')).Out | Should -BeExactly "ls *.log | wc -l`n"
+    }
+
+    It 'does not translate paths in a -c string' {
+        (Invoke-Wslbin -Name 'wslbin' -Arguments @('--explain', '-c', 'cat C:\x')).Out | Should -BeExactly "cat C:\x`n"
     }
 
     It 'refuses -c with --raw, -c without a string, and unknown options' {
@@ -425,6 +571,31 @@ Describe 'real WSL' -Tag 'WSL' -Skip:$NoWsl {
     It 'does not expand wildcards in raw mode' {
         $dir = New-FileDir -Files @('a.log')
         (Invoke-Wslbin -Name 'printf' -WorkingDirectory $dir -Arguments @('--wslbin-raw', '[%s]\n', '*.log')).Out.Replace("`r", '') | Should -BeExactly "[*.log]`n"
+    }
+
+    It 'turns a Windows path into the path Linux sees' {
+        $dir = New-FileDir -Files @('a.log', 'b.log')
+        $linux = (& wsl.exe --exec wslpath -a $dir).Trim()
+        $r = Invoke-Wslbin -Name 'printf' -Arguments @('[%s]\n', $dir, "--dir=$dir", "$dir\*.log")
+        $r.Out.Replace("`r", '') | Should -BeExactly "[$linux]`n[--dir=$linux]`n[$linux/a.log]`n[$linux/b.log]`n"
+    }
+
+    It 'finds files by a Windows path given to the utility itself' {
+        $dir = New-FileDir -Files @('hello.txt')
+        (Invoke-Wslbin -Name 'cat' -Arguments @("$dir\hello.txt")).Out.Replace("`r", '') | Should -BeExactly "hello.txt`n"
+    }
+
+    It 'finds files by relative paths written with backslashes, as Tab completion writes them' {
+        $dir = New-FileDir -Files @('hello.txt')
+        New-Item -ItemType Directory -Path (Join-Path $dir 'my dir') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $dir 'my dir\inner.txt'), "inner`n")
+        foreach ($path in '.\hello.txt', '.\my dir\inner.txt', 'my dir\inner.txt', '.\my dir\..\hello.txt') {
+            $r = Invoke-Wslbin -Name 'cat' -WorkingDirectory $dir -Arguments @($path)
+            $r.ExitCode | Should -Be 0 -Because "$path`: $($r.Err)"
+            $r.Out.Replace("`r", '') | Should -Be ((Get-Content -Raw (Join-Path $dir $path)).Replace("`r", ''))
+        }
+        (Invoke-Wslbin -Name 'cat' -WorkingDirectory (Join-Path $dir 'my dir') -Arguments @('..\hello.txt')).Out.Replace("`r", '') | Should -BeExactly "hello.txt`n"
+        (Invoke-Wslbin -Name 'cat' -WorkingDirectory $dir -Arguments @('.\nope.txt')).ExitCode | Should -Not -Be 0
     }
 
     It 'handles non-ASCII file names and arguments' {
