@@ -1,0 +1,2 @@
+# LF in the working tree on every machine: shell scripts run in WSL and must never get CRLF.
+* text=auto eol=lf
