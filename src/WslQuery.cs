@@ -40,7 +40,30 @@ namespace Wslbin
         // WSL 2 and the Store version alike). Asked only after wsl.exe failed. The test build replaces it.
         internal static Func<bool> HasDistribution = RegistryHasDistribution;
 
+        // The name of the default distribution: the Lxss key names its key in DefaultDistribution. Null
+        // when the registry does not say. The test build replaces it.
+        internal static Func<string> DefaultDistribution = RegistryDefaultDistribution;
+
         const string LxssKey = @"Software\Microsoft\Windows\CurrentVersion\Lxss";
+
+        static string RegistryDefaultDistribution()
+        {
+            try
+            {
+                using (RegistryKey lxss = Registry.CurrentUser.OpenSubKey(LxssKey))
+                {
+                    string id = lxss == null ? null : lxss.GetValue("DefaultDistribution") as string;
+                    if (string.IsNullOrEmpty(id)) return null;
+                    using (RegistryKey distro = lxss.OpenSubKey(id))
+                    {
+                        return distro == null ? null : distro.GetValue("DistributionName") as string;
+                    }
+                }
+            }
+            catch (System.Security.SecurityException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
+            catch (IOException) { return null; }
+        }
 
         // A registry that cannot be read says nothing, and then the exit code of the utility stands.
         static bool RegistryHasDistribution()

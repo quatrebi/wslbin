@@ -79,6 +79,16 @@ namespace Wslbin
             return TryTranslate(folder, cfg, delegate { }, out mapped) ? mapped : null;
         }
 
+        // "Debian" for \\wsl.localhost\Debian\x or \\wsl$\Debian\x; null for any other path.
+        public static string DistributionOf(string path)
+        {
+            if (!path.StartsWith(@"\\", StringComparison.Ordinal)) return null;
+            string[] parts = path.Substring(2).Split('\\');
+            bool isWsl = parts[0].Equals("wsl.localhost", StringComparison.OrdinalIgnoreCase) ||
+                         parts[0].Equals("wsl$", StringComparison.OrdinalIgnoreCase);
+            return isWsl && parts.Length > 1 && parts[1].Length > 0 ? parts[1] : null;
+        }
+
         public static string TranslateArg(string arg, Config cfg, Action<string> warn)
         {
             string translated;

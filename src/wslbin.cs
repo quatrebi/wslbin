@@ -162,6 +162,8 @@ namespace Wslbin
             {
                 Out.Info(script);
                 env.Describe();
+                string problem = Launcher.FolderProblem(cfg);
+                if (problem != null) Out.Warn(problem + " (so this would not run)");
                 return 0;
             }
             // Arguments after "-c <string>" become $0, $1, ... of the bash string, as in "bash -c".
