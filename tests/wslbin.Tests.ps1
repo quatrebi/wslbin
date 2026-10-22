@@ -469,6 +469,56 @@ Describe 'wslbin.exe itself' {
 
 }
 
+Describe 'Windows variables for Linux (WSLENV plan)' {
+    BeforeAll {
+        $script:EnvVars = @{
+            APPX_PATH  = 'C:\x\y'
+            APPX_LIST  = 'C:\a;D:\b c'
+            APPX_MIXED = 'C:\a;not-a-path'
+            APPX_PLAIN = 'hello'
+            APPX_REL   = '..\rel'
+            CI         = '1'
+            OTHER      = 'no'
+        }
+    }
+
+    It 'passes the variables that pass_env names, translating paths and nothing else' {
+        $r = Invoke-Wslbin -Ini 'pass_env = APPX_*, CI' -Env $script:EnvVars -Arguments @('--wslbin-explain')
+        $lines = $r.Err -split "`n" | Where-Object { $_ }
+        $lines | Should -Contain 'wslbin: env APPX_PATH=/mnt/c/x/y'
+        $lines | Should -Contain 'wslbin: env APPX_LIST=/mnt/c/a:/mnt/d/b c'
+        $lines | Should -Contain 'wslbin: env APPX_MIXED'
+        $lines | Should -Contain 'wslbin: env APPX_PLAIN'
+        $lines | Should -Contain 'wslbin: env APPX_REL'
+        $lines | Should -Contain 'wslbin: env CI'
+        $r.Err | Should -Not -Match 'OTHER'
+    }
+
+    It 'does not print values it did not change' {
+        (Invoke-Wslbin -Ini 'pass_env = APPX_PLAIN' -Env $script:EnvVars -Arguments @('--wslbin-explain')).Err | Should -Not -Match 'hello'
+    }
+
+    It 'matches names without regard to case' {
+        (Invoke-Wslbin -Ini 'pass_env = appx_pl*' -Env $script:EnvVars -Arguments @('--wslbin-explain')).Err | Should -Match 'env APPX_PLAIN'
+    }
+
+    It 'never passes PATH or WSLENV, even for a pattern that matches everything' {
+        $r = Invoke-Wslbin -Ini 'pass_env = *' -Env ($script:EnvVars + @{ WSLENV = 'FOO' }) -Arguments @('--wslbin-explain')
+        $r.Err | Should -Not -Match 'env (PATH|Path|WSLENV)\b'
+        $r.Err | Should -Match 'env APPX_PLAIN'
+    }
+
+    It 'leaves variables that the user already listed in WSLENV to the user' {
+        $r = Invoke-Wslbin -Ini 'pass_env = APPX_*' -Env ($script:EnvVars + @{ WSLENV = 'appx_plain/p' }) -Arguments @('--wslbin-explain')
+        $r.Err | Should -Not -Match 'env APPX_PLAIN'
+        $r.Err | Should -Match 'env APPX_PATH='
+    }
+
+    It 'prints nothing without pass_env' {
+        (Invoke-Wslbin -Env $script:EnvVars -Arguments @('--wslbin-explain')).Err | Should -BeNullOrEmpty
+    }
+}
+
 # The bash command that --wslbin-explain prints, run by a real bash without WSL: Git Bash, which GitHub's
 # Windows runners have, so the escaping is checked by bash in CI and not only on a machine with WSL.
 Describe 'escaping, checked by bash (Git Bash)' -Skip:$NoGitBash {
@@ -667,6 +717,16 @@ Describe 'real WSL' -Tag 'WSL' -Skip:$NoWsl {
         (Invoke-Wslbin -Name 'wslbin' -WorkingDirectory $dir -Arguments @('-c', 'ls *.log | wc -l && echo done')).Out.Replace("`r", '') | Should -BeExactly "2`ndone`n"
     }
 
+    It 'shows Windows variables to Linux through pass_env, with paths translated' {
+        $dir = New-FileDir -Files @('x')
+        $linux = (& wsl.exe --exec wslpath -a $dir).Trim()
+        $env1 = @{ APPX_PATH = $dir; APPX_LIST = "$dir;$dir"; APPX_PLAIN = 'hello world'; APPX_REL = '..\rel'; OTHER = 'no'; WSLENV = 'APPX_USER/p'; APPX_USER = $dir }
+        $r = Invoke-Wslbin -Name 'wslbin' -Ini 'pass_env = APPX_*' -Env $env1 -Arguments @('-c', 'for n in APPX_PATH APPX_LIST APPX_PLAIN APPX_REL APPX_USER OTHER; do printf "%s=[%s]\n" $n "${!n}"; done')
+        $r.ExitCode | Should -Be 0
+        $r.Out.Replace("`r", '') | Should -BeExactly (
+            "APPX_PATH=[$linux]`nAPPX_LIST=[${linux}:$linux]`nAPPX_PLAIN=[hello world]`nAPPX_REL=[..\rel]`nAPPX_USER=[$linux]`nOTHER=[]`n")
+    }
+
     It 'keeps an empty $0 and empty parameters of a -c string empty, and an argument with SOH inside as it is' {
         $r = Invoke-Wslbin -Name 'wslbin' -Arguments @('-c', 'printf "[%s][%s][%s][%s]" "$0" "$1" "$2" "$#"', '', '', 'y')
         $r.ExitCode | Should -Be 0 -Because $r.Err
@@ -703,5 +763,18 @@ Describe 'real WSL' -Tag 'WSL' -Skip:$NoWsl {
             }
         }
         $checked | Should -Be 3000
+    }
+
+    # Regression: rewriting SystemRoot in the environment of wsl.exe made it fail with an RPC error.
+    It 'does not disturb wsl.exe when pass_env names variables that wsl.exe itself reads' {
+        $r = Invoke-Wslbin -Name 'wslbin' -Ini 'pass_env = SystemRoot, windir, TEMP, TMP, USERPROFILE' -Arguments @('-c', 'printf "[%s]\n" "$SystemRoot" "$TEMP"')
+        $r.ExitCode | Should -Be 0
+        $r.Out.Replace("`r", '') | Should -BeExactly ("[$((& wsl.exe --exec wslpath -a $env:SystemRoot).Trim())]`n[$((& wsl.exe --exec wslpath -a $env:TEMP).Trim())]`n")
+    }
+
+    It 'leaves the Linux PATH alone when pass_env matches everything' {
+        $r = Invoke-Wslbin -Name 'ls' -Ini 'pass_env = *' -Arguments @('-d', '/')
+        $r.ExitCode | Should -Be 0
+        $r.Out.Trim() | Should -BeExactly '/'
     }
 }

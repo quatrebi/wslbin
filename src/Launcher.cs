@@ -14,10 +14,11 @@ namespace Wslbin
     // touched: the child inherits the console, so TUIs, colours, pipes and Ctrl+C work.
     internal static class Launcher
     {
-        public static int Run(Config cfg, string script, IList<string> positional)
+        public static int Run(Config cfg, string script, IList<string> positional, EnvPlan env)
         {
             var psi = new ProcessStartInfo(FindWsl(), WslArguments(cfg, script, positional));
             psi.UseShellExecute = false;
+            env.ApplyTo(psi);
             // A wrapper ignores Ctrl+C for good, not only while wsl.exe runs: the event reaches this process
             // on a thread of its own, possibly after wsl.exe has ended, and must not end it before it hands
             // back the exit code of the utility.

@@ -9,6 +9,7 @@
 //   Config.cs           Config: wslbin.ini next to the .exe
 //   Paths.cs            Paths: Windows path -> Linux path
 //   Bash.cs             Bash: one argument -> one bash word (smart / sh / raw)
+//   EnvPlan.cs          EnvPlan: Windows variables handed to Linux through WSLENV
 //   Launcher.cs         Launcher: wsl.exe command line, starting a child in the console, exit codes
 //   Out.cs              Out: console output that does not depend on the console code page
 
@@ -154,15 +155,17 @@ namespace Wslbin
 
             Config cfg = Config.Load(Config.PathFor(exePath), Out.Warn);
             string script = BuildScript(inv, cfg);
+            EnvPlan env = EnvPlan.Create(cfg);
 
             if (inv.Explain)
             {
                 Out.Info(script);
+                env.Describe();
                 return 0;
             }
             // Arguments after "-c <string>" become $0, $1, ... of the bash string, as in "bash -c".
             IList<string> positional = inv.Script != null ? inv.Args : new List<string>();
-            return Launcher.Run(cfg, script, positional);
+            return Launcher.Run(cfg, script, positional, env);
         }
 
         // <utility>.exe [--wslbin-*]... [arguments]
