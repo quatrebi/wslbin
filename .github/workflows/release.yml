@@ -1,16 +1,19 @@
 # A release is made by a button: Actions > Release > Run workflow, on main. Nothing is tagged by hand;
-# this workflow makes the tag v<version> on the commit that it tested.
+# this workflow makes the tag v<version> on the commit that it built and tested.
 #
 # The version is the one of the commit (get-version.ps1 -Kind release): MAJOR.MINOR from wslbin.csproj, PATCH
-# counted from git. Four jobs, each with the least rights it needs:
-#   test     reads: tests the commit, builds the program, checks that it reports the version
-#   release  writes the release and signs: builds again, makes the zip, its SHA256 and the attestation,
-#            and publishes them on the commit that was tested
+# counted from git. Five jobs, each with the least rights it needs:
+#   build    reads: works the version out, stops when it is released already, builds the program, checks
+#            that it reports the version, and hands it on as an artifact
+#   test     reads: runs the tests on that very program (WSLBIN_TEST_EXE)
+#   release  writes the release and signs: makes the zip of that very program, its SHA256 and the
+#            attestation, and publishes them on the commit of this run. It builds nothing: what is
+#            released is what was tested, and no compiler runs where a token can write.
 #   pages    deploys the site (pages.yml, called): the list of releases, releases.json, is made from them
 #   probe    reads the site and checks that it names the version that was released
 #
-# What is in the zip for now: wslbin.exe and LICENSE. The scripts of the installer and manifest.json join
-# it with the installer. What anyone can choose never reaches a shell by being pasted into it (env: only);
+# What is in the zip: wslbin.exe, LICENSE, manifest.json and the scripts of the installer (setup/), made by
+# .github/make-package.ps1. What anyone can choose never reaches a shell by being pasted into it (env: only);
 # tests/workflows.Tests.ps1 checks that. The actions are pinned to the commit of a release tag (the comment
 # names it); look up a new one with:  git ls-remote --tags https://github.com/<owner>/<action> refs/tags/<tag>
 # Not run on GitHub yet: the repository has not been pushed. One-time setup: Settings > Pages > Source:
@@ -28,9 +31,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
+  build:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -82,6 +85,35 @@ jobs:
           EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: ./.github/check-version.ps1
 
+      - name: Hand the program on to the tests and the release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-program
+          path: bin/wslbin.exe
+          retention-days: 7
+          if-no-files-found: error
+
+  test:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # the tests of the build and of the stand-in wsl.exe build programs of their own
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: The program that was built
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-program
+          path: ${{ runner.temp }}/release-program
+
       - name: Pester 5 or later
         shell: pwsh
         run: |
@@ -89,9 +121,10 @@ jobs:
             Install-Module Pester -MinimumVersion 5.0.0 -Scope CurrentUser -Force -SkipPublisherCheck
           }
 
-      - name: Test (everything not tagged WSL)
+      - name: Test that program (everything not tagged WSL)
         shell: pwsh
         run: |
+          $env:WSLBIN_TEST_EXE = Join-Path $env:RUNNER_TEMP 'release-program\wslbin.exe'
           Import-Module Pester -MinimumVersion 5.0.0
           $config = New-PesterConfiguration
           $config.Run.Path = './tests'
@@ -100,56 +133,39 @@ jobs:
           Invoke-Pester -Configuration $config
 
   release:
-    needs: test
+    needs: [build, test]
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     permissions:
       contents: write
       id-token: write
       attestations: write
       artifact-metadata: write
     env:
-      VERSION: ${{ needs.test.outputs.version }}
+      VERSION: ${{ needs.build.outputs.version }}
     steps:
+      # the scripts that make the package, LICENSE and setup/ of the commit of this run (the one that was built)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - name: The program that was built and tested
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          global-json-file: global.json
+          name: release-program
+          path: ${{ runner.temp }}/release-program
 
-      - name: The commit is the one that was tested
+      - name: The program says the version of the release
         shell: pwsh
         run: |
-          $now = ./get-version.ps1 -Kind release
-          if ($now -ne $env:VERSION) {
-              throw "The commit has moved: the tests were of $env:VERSION, this commit is $now. Run the release again."
-          }
-
-      - name: Build (Native AOT)
-        shell: pwsh
-        run: ./build.ps1 -Version $env:VERSION
-
-      - name: The program says the version that was asked for
-        shell: pwsh
-        env:
-          EXPECTED_VERSION: ${{ needs.test.outputs.version }}
-        run: ./.github/check-version.ps1
+          $env:EXPECTED_VERSION = $env:VERSION
+          $env:PROGRAM = Join-Path $env:RUNNER_TEMP 'release-program\wslbin.exe'
+          ./.github/check-version.ps1
 
       - name: The files of the release
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path dist | Out-Null
-          $zip = "wslbin-$env:VERSION-win-x64.zip"
-          $sha = "wslbin-$env:VERSION-win-x64.zip.sha256"
-          Compress-Archive -Path bin/wslbin.exe, LICENSE -DestinationPath "dist/$zip"
-          $hash = (Get-FileHash "dist/$zip" -Algorithm SHA256).Hash.ToLowerInvariant()
-          # "<hash>  <name>": the format of sha256sum, ASCII, line feeds
-          $line = "$hash  $zip`n"
-          [IO.File]::WriteAllText("dist/$sha", $line, [Text.UTF8Encoding]::new($false))
-          [IO.File]::WriteAllText('dist/SHA256SUMS.txt', $line, [Text.UTF8Encoding]::new($false))
+          ./.github/make-package.ps1 -Version $env:VERSION -Exe (Join-Path $env:RUNNER_TEMP 'release-program\wslbin.exe') -OutputDir dist
           Get-ChildItem dist | Format-Table Name, Length
           Get-Content dist/SHA256SUMS.txt
 
@@ -175,12 +191,12 @@ jobs:
     uses: ./.github/workflows/pages.yml
 
   probe:
-    needs: [test, pages]
+    needs: [build, pages]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       PAGE_URL: ${{ needs.pages.outputs.page_url }}
-      VERSION: ${{ needs.test.outputs.version }}
+      VERSION: ${{ needs.build.outputs.version }}
     steps:
       - name: The site names the version that was released
         shell: pwsh
@@ -195,3 +211,4 @@ jobs:
               Start-Sleep -Seconds 15
           }
           throw "$url says '$latest', not $env:VERSION."
+

@@ -311,6 +311,15 @@ Describe 'the workflows' {
         It 'does not run the tests that need WSL' {
             $script:Ci | Should -Match "ExcludeTag = 'WSL'"
         }
+        It 'builds once: the tests take a copy of that program (WSLBIN_TEST_EXE) instead of building their own' {
+            ([regex]::Matches($script:Ci, '\./build\.ps1')).Count | Should -Be 1
+            $copy = $script:Ci.IndexOf("Copy-Item -LiteralPath bin/wslbin.exe -Destination `$exe")
+            $exe = $script:Ci.IndexOf("`$env:WSLBIN_TEST_EXE = `$exe")
+            $test = $script:Ci.IndexOf('Invoke-Pester')
+            $copy | Should -BeGreaterThan 0
+            $exe | Should -BeGreaterThan $copy
+            $test | Should -BeGreaterThan $exe
+        }
     }
 
     Context 'pages.yml' {
@@ -330,6 +339,12 @@ Describe 'the workflows' {
             $build | Should -Match 'path: _site'
             $build | Should -Not -Match ': write'
         }
+        It 'publishes the files of the site by name: the landing page and the loader, not a draft in site/' {
+            $build = Get-JobText $script:Pages 'build'
+            $build | Should -Match "foreach \(\`$file in 'index\.html', 'install\.ps1'\)"
+            $build | Should -Not -Match 'site/\*|site\\\*'
+            $build | Should -Not -Match 'v2\.html'
+        }
         It 'may write Pages only in the job that deploys' {
             (Get-JobText $script:Pages 'deploy') | Should -Match 'pages: write\n      id-token: write'
             ([regex]::Matches($script:Pages, 'pages: write')).Count | Should -Be 1
@@ -343,6 +358,7 @@ Describe 'the workflows' {
 Describe 'release.yml' {
     BeforeAll {
         $script:Rel = Get-WorkflowText 'release.yml'
+        $script:BuildJob = Get-JobText $script:Rel 'build'
         $script:TestJob = Get-JobText $script:Rel 'test'
         $script:ReleaseJob = Get-JobText $script:Rel 'release'
         $script:PagesJob = Get-JobText $script:Rel 'pages'
@@ -357,32 +373,49 @@ Describe 'release.yml' {
         $script:Rel | Should -Match '(?m)^concurrency:\n  group: release\n  cancel-in-progress: false\n'
     }
     It 'refuses to go on from any branch but main, in its very first step' {
-        $guard = $script:TestJob.IndexOf("refs/heads/main")
-        $checkout = $script:TestJob.IndexOf('actions/checkout')
+        $guard = $script:BuildJob.IndexOf("refs/heads/main")
+        $checkout = $script:BuildJob.IndexOf('actions/checkout')
         $guard | Should -BeGreaterThan 0
         $guard | Should -BeLessThan $checkout
     }
     It 'takes the whole history and the tags to work the version out and to see that it is not released yet' {
-        $script:TestJob | Should -Match 'fetch-depth: 0'
-        $script:TestJob | Should -Match 'fetch-tags: true'
-        $script:ReleaseJob | Should -Match 'fetch-depth: 0'
+        $script:BuildJob | Should -Match 'fetch-depth: 0'
+        $script:BuildJob | Should -Match 'fetch-tags: true'
     }
     It 'works the version out for a release, and stops when that version is already released' {
-        $script:TestJob | Should -Match '-Kind release'
-        $script:TestJob | Should -Match 'already released'
-        $script:TestJob | Should -Match 'rev-parse -q --verify'
-        $script:TestJob | Should -Match 'outputs:\n      version: \$\{\{ steps\.version\.outputs\.version \}\}'
+        $script:BuildJob | Should -Match '-Kind release'
+        $script:BuildJob | Should -Match 'already released'
+        $script:BuildJob | Should -Match 'rev-parse -q --verify'
+        $script:BuildJob | Should -Match 'outputs:\n      version: \$\{\{ steps\.version\.outputs\.version \}\}'
     }
-    It 'tests with the right to read only, builds, checks the program and runs the tests that need no WSL' {
+    It 'builds once, with the right to read only, checks the program and hands it on as an artifact' {
+        $script:BuildJob | Should -Not -Match ': write'
+        $build = $script:BuildJob.IndexOf('./build.ps1 -Version')
+        $check = $script:BuildJob.IndexOf('check-version.ps1')
+        $upload = $script:BuildJob.IndexOf('actions/upload-artifact')
+        $build | Should -BeGreaterThan 0
+        $check | Should -BeGreaterThan $build
+        $upload | Should -BeGreaterThan $check
+        $script:BuildJob | Should -Match 'name: release-program\n\s+path: bin/wslbin\.exe'
+        $script:BuildJob | Should -Match 'if-no-files-found: error'
+        ([regex]::Matches($script:Rel, '\./build\.ps1')).Count | Should -Be 1
+    }
+    It 'tests that very program, with the right to read only, and runs the tests that need no WSL' {
+        $script:TestJob | Should -Match '(?m)^    needs: build\n'
         $script:TestJob | Should -Not -Match ': write'
-        $script:TestJob | Should -Match './build\.ps1 -Version'
-        $script:TestJob | Should -Match 'check-version\.ps1'
+        $script:TestJob | Should -Match 'actions/download-artifact@[0-9a-f]{40}'
+        $script:TestJob | Should -Match 'name: release-program'
+        $download = $script:TestJob.IndexOf('actions/download-artifact')
+        $exe = $script:TestJob.IndexOf("`$env:WSLBIN_TEST_EXE = Join-Path `$env:RUNNER_TEMP 'release-program\wslbin.exe'")
+        $pester = $script:TestJob.IndexOf('Invoke-Pester')
+        $exe | Should -BeGreaterThan $download
+        $pester | Should -BeGreaterThan $exe
         $script:TestJob | Should -Match "ExcludeTag = 'WSL'"
     }
-    It 'runs the jobs in order: test, release, pages (the site), probe' {
-        $script:ReleaseJob | Should -Match '(?m)^    needs: test\n'
+    It 'runs the jobs in order: build, test, release, pages (the site), probe' {
+        $script:ReleaseJob | Should -Match '(?m)^    needs: \[build, test\]\n'
         $script:PagesJob | Should -Match '(?m)^    needs: release\n'
-        $script:ProbeJob | Should -Match '(?m)^    needs: \[test, pages\]\n'
+        $script:ProbeJob | Should -Match '(?m)^    needs: \[build, pages\]\n'
     }
     It 'gives the right to write and to sign to the release job only, and the right to deploy to the pages job only' {
         ([regex]::Matches($script:Rel, 'contents: write')).Count | Should -Be 1
@@ -395,21 +428,29 @@ Describe 'release.yml' {
         $script:PagesJob | Should -Match 'id-token: write'
         $script:ProbeJob | Should -Not -Match ': write'
     }
-    It 'builds the version of the test job again, and stops if the commit has moved' {
-        $script:ReleaseJob | Should -Match 'VERSION: \$\{\{ needs\.test\.outputs\.version \}\}'
-        $script:ReleaseJob | Should -Match '-Kind release'
-        $script:ReleaseJob | Should -Match 'the commit has moved'
-        $script:ReleaseJob | Should -Match './build\.ps1 -Version'
+    It 'builds nothing where it can write: the release job takes the program that was tested and checks its version' {
+        $script:ReleaseJob | Should -Not -Match 'build\.ps1|setup-dotnet|dotnet '
+        $script:ReleaseJob | Should -Match 'VERSION: \$\{\{ needs\.build\.outputs\.version \}\}'
+        $script:ReleaseJob | Should -Match 'actions/download-artifact@[0-9a-f]{40}'
+        $script:ReleaseJob | Should -Match 'name: release-program'
+        $download = $script:ReleaseJob.IndexOf('actions/download-artifact')
+        $check = $script:ReleaseJob.IndexOf('check-version.ps1')
+        $package = $script:ReleaseJob.IndexOf('make-package.ps1')
+        $check | Should -BeGreaterThan $download
+        $package | Should -BeGreaterThan $check
+        $script:ReleaseJob.Contains("`$env:PROGRAM = Join-Path `$env:RUNNER_TEMP 'release-program\wslbin.exe'") | Should -BeTrue
     }
     It 'makes the zip, its hash files and the attestation, and publishes the release on that very commit' {
-        $script:ReleaseJob | Should -Match 'wslbin-\$env:VERSION-win-x64\.zip'
-        $script:ReleaseJob | Should -Match 'win-x64\.zip\.sha256'
+        # the names of the files, their hashes and manifest.json are made by make-package.ps1 (tests/setup.Tests.ps1)
+        $script:ReleaseJob.Contains("./.github/make-package.ps1 -Version `$env:VERSION -Exe (Join-Path `$env:RUNNER_TEMP 'release-program\wslbin.exe') -OutputDir dist") | Should -BeTrue
         $script:ReleaseJob | Should -Match 'SHA256SUMS\.txt'
         $script:ReleaseJob | Should -Match "subject-path: 'dist/\*'"
         $script:ReleaseJob | Should -Match 'gh release create "v\$env:VERSION"'
         $script:ReleaseJob | Should -Match '--target \$env:GITHUB_SHA'
         $script:ReleaseJob | Should -Match 'GH_TOKEN: \$\{\{ github\.token \}\}'
         $script:ReleaseJob | Should -Match '--generate-notes'
+        # the token is in the step that publishes, and nowhere else
+        ([regex]::Matches($script:Rel, 'GH_TOKEN')).Count | Should -Be 1
     }
     It 'puts the site on Pages by calling the one workflow that deploys, with the rights it needs' {
         $script:PagesJob | Should -Match 'uses: \./\.github/workflows/pages\.yml'
@@ -417,7 +458,7 @@ Describe 'release.yml' {
     }
     It 'asks the site, after the deployment, for the version that was released' {
         $script:ProbeJob | Should -Match 'PAGE_URL: \$\{\{ needs\.pages\.outputs\.page_url \}\}'
-        $script:ProbeJob | Should -Match 'VERSION: \$\{\{ needs\.test\.outputs\.version \}\}'
+        $script:ProbeJob | Should -Match 'VERSION: \$\{\{ needs\.build\.outputs\.version \}\}'
         $script:ProbeJob | Should -Match 'releases\.json'
         $script:ProbeJob | Should -Match 'Invoke-RestMethod'
     }
