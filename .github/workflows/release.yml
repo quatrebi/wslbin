@@ -212,3 +212,12 @@ jobs:
           }
           throw "$url says '$latest', not $env:VERSION."
 
+      - name: The loader is served as text, so that "irm | iex" works
+        shell: pwsh
+        run: |
+          $url = $env:PAGE_URL.TrimEnd('/') + '/install.ps1?run=' + $env:GITHUB_RUN_ID
+          $script = Invoke-RestMethod -Uri $url -Headers @{ 'Cache-Control' = 'no-cache' }
+          # a type of content that irm does not take for text gives bytes, and iex cannot run bytes
+          if ($script -isnot [string]) { throw "$url came as $($script.GetType().FullName), not as text: irm | iex would not work." }
+          if (-not $script.StartsWith('# wslbin loader')) { throw "$url does not start like the loader: $($script.Substring(0, [Math]::Min(60, $script.Length)))" }
+          Write-Host "$url is the loader ($($script.Length) characters)"

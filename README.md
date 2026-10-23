@@ -24,36 +24,56 @@ turns `C:\proj\dist\` into `/mnt/c/proj/dist/`, lets bash expand `*.log` by Linu
 everything else, runs the utility in WSL and returns its exit code. Input and output are not
 intercepted, so pipes and full-screen programs work.
 
-> **Status.** It works and is tested, but there is no release yet: until the first one, install from a
-> checkout of the source.
+> **Status.** It works and is tested, but there is no release yet, so the command below has nothing to
+> download until the first one is made (by a button in Actions). Until then, build it from the source: see
+> [Build and contribute](#build-and-contribute).
 
 ## Install
 
 Needs Windows 10 22H2 or Windows 11 with WSL 2 and a distribution. The program is one self-contained
-file and needs nothing else. Until there is a release, `install.ps1` builds it from a checkout of the
-source, and that needs the [.NET SDK 10](https://dotnet.microsoft.com/download) and the C++ build tools
-of Visual Studio (the workload "Desktop development with C++").
+file and needs nothing else (no .NET, no build tools).
 
 ```powershell
-# from a checkout of the source:
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Source . -Link make,rsync,dig -Completion pwsh,clink
-
-# from a release (install.ps1 and SHA256SUMS.txt are on the release page; the hash is that of
-# wslbin-<tag>-source.zip; -Repository is quatrebi/wslbin unless you name another):
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v<version> -Sha256 <hash> -Link make,rsync,dig
+irm https://quatrebi.github.io/wslbin/install.ps1 | iex
 ```
 
-Windows does not run scripts by default, and marks a downloaded `install.ps1` as coming from the
-internet: `-ExecutionPolicy Bypass` lets this one run go ahead and changes nothing else.
+That downloads the latest release, checks it, and runs the installer that is in it. In a console it asks
+for whom to install and whether to hook Tab completion in; with parameters (a script block takes them) it
+asks nothing:
+
+```powershell
+& ([scriptblock]::Create((irm https://quatrebi.github.io/wslbin/install.ps1))) -Version 0.1.7 -Scope AllUsers -Link make,rsync,dig -Completion pwsh,clink -Quiet
+```
+
+`WSLBIN_VERSION` and `WSLBIN_SCOPE` in the environment do the same for the first line. Read the script
+before you run it, if you like: [`site/install.ps1`](site/install.ps1) is short. It reads the list of
+releases from the site (`releases.json`: the address and the SHA256 of each zip), downloads the zip from
+GitHub Releases, checks the SHA256 (the hash comes from the site and the file from GitHub), with
+`-VerifyAttestation` also where GitHub says it was built (needs the [gh](https://cli.github.com) program),
+unpacks it into a temporary folder and runs `setup\install.ps1` from it.
+
+The zip (`wslbin-<version>-win-x64.zip` on the [releases page](https://github.com/quatrebi/wslbin/releases),
+with its `.sha256` and `SHA256SUMS.txt`) holds `wslbin.exe`, `LICENSE`, `manifest.json` (every file with
+its SHA256) and `setup\install.ps1`, `setup\uninstall.ps1`: unpack it and run
+`.\setup\install.ps1 -Link make,rsync,dig -Completion pwsh,clink` to install without a network.
 
 `-Scope AllUsers` (the default tries it first) puts wslbin in `C:\Program Files\wslbin`, in the PATH
 of the machine, and asks for administrator rights (UAC). The copy that has the rights installs the
 program and nothing more: `-Link` and `-Completion` are done afterwards as you, in your WSL and your
 profiles (so `-Link` asks for the rights once more, to write the wrappers). `-Scope CurrentUser` (the
-fallback when the rights are refused) uses `%LOCALAPPDATA%\Programs\wslbin` and the PATH of the user.
-`-Completion` hooks Tab completion into PowerShell (both editions) and Clink. `-Uninstall` takes it all
-out again, the block for AI agents included (your `wslbin.ini` stays). `Get-Help .\install.ps1 -Full`
-lists the rest.
+fallback when the rights are refused) uses `%LOCALAPPDATA%\Programs\wslbin` and the PATH of the user, and
+needs no rights. `-Completion` hooks Tab completion into PowerShell (both editions) and Clink.
+
+**Update** is the same command: it compares the version with the one in Settings > Apps, installs a newer
+one, says "installed already" for the same one (`-Force` installs it again) and refuses an older one
+(`-Force` goes back). Files are replaced all together or not at all; the running `wslbin.exe` and the
+wrappers are renamed to `.old` first and deleted at once or at the next run. Your `wslbin.ini` is not
+touched.
+
+**Remove**: Settings > Apps > wslbin > Uninstall, or `setup\uninstall.ps1` in the install folder
+(`-Quiet` asks nothing, `-Purge` deletes `wslbin.ini` too). It takes out the wrappers, the PATH entry,
+the files, the entry in Apps, the hooks in the profiles and Clink, and the block for AI agents. The
+installer writes nothing else to the registry.
 
 Then:
 
@@ -91,7 +111,7 @@ live in `wslbin.ini` next to `wslbin.exe`: `wslbin --help config`.
 The variants come from bash-completion in WSL, so `rsync --<Tab>`, `make <Tab>` or `man <Tab>` give what
 they give in Linux, and Windows paths work both ways (`C:\Prog` becomes `C:\Program Files\`).
 In PowerShell, put `wslbin --init pwsh | Invoke-Expression` in the profile; in cmd, `wslbin --init clink`
-(needs [Clink](https://chrisant996.github.io/clink/)). `install.ps1 -Completion pwsh,clink` does both.
+(needs [Clink](https://chrisant996.github.io/clink/)). The installer's `-Completion pwsh,clink` does both.
 The PowerShell line also removes the aliases that would hide a wrapper (`ls`, `cat`, `rm`, ...), for
 the whole session and every script in it: make wrappers only for names that you want to mean the
 Linux tool.
@@ -136,7 +156,8 @@ data/              utilities that have a Windows version of their own (built int
 wsl/complete.sh    completion helper that runs in WSL
 shell/             PowerShell and Clink code that "wslbin --init" fills in
 docs/en  docs/ru   help texts (built into the .exe)
-install.ps1        installer and uninstaller
+setup/             install.ps1, uninstall.ps1 and what they share: they go into the release zip
+site/              the site (GitHub Pages): the landing page and install.ps1, the loader
 build.ps1          the build (dotnet publish, Native AOT)
 get-version.ps1    the version of a build; its functions are in Wslbin.Version.psm1
 tests/             Pester tests

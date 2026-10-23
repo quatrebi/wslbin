@@ -1,5 +1,6 @@
-# Publishes the site to GitHub Pages: the landing page (the site/ folder) and releases.json, the list of the
-# releases with the address and the SHA256 of the zip of each, which .github/new-releases-json.ps1 makes
+# Publishes the site to GitHub Pages: the landing page and the loader (site/index.html and site/install.ps1,
+# named one by one: nothing else of site/ is published) and releases.json, the list of the releases
+# with the address and the SHA256 of the zip of each, which .github/new-releases-json.ps1 makes
 # from the releases of the repository. One deployment replaces the whole site, so this is the only
 # workflow that deploys, and releases.json is in every deployment of it.
 # It runs when the site changes on main, by hand, and after every release (release.yml calls it).
@@ -47,8 +48,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
+          # the files of the site by name: a draft that lies in site/ is not published
           New-Item -ItemType Directory -Path _site | Out-Null
-          Copy-Item -Path site/* -Destination _site -Recurse
+          foreach ($file in 'index.html', 'install.ps1') { Copy-Item -LiteralPath (Join-Path site $file) -Destination _site }
           ./.github/new-releases-json.ps1 -Repository $env:REPOSITORY -Output _site/releases.json
           Get-Content _site/releases.json
 

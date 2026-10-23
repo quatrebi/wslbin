@@ -24,35 +24,56 @@ dig example.com
 экранирует всё остальное, запускает утилиту в WSL и возвращает её код выхода. Ввод и вывод не
 перехватываются, поэтому работают конвейеры и полноэкранные программы.
 
-> **Состояние.** Всё работает и покрыто тестами, но релиза ещё нет: до первого устанавливайте из
-> копии исходников.
+> **Состояние.** Всё работает и покрыто тестами, но релиза ещё нет, так что команде ниже до первого
+> релиза (его делает кнопка в Actions) нечего скачивать. До тех пор соберите программу из исходников: см.
+> [Сборка и участие в разработке](#сборка-и-участие-в-разработке).
 
 ## Установка
 
 Нужны Windows 10 22H2 или Windows 11 с WSL 2 и дистрибутивом. Программа - один самодостаточный файл,
-больше ей ничего не нужно. Пока релиза нет, `install.ps1` собирает её из копии исходников, а для этого
-нужны [.NET SDK 10](https://dotnet.microsoft.com/download) и инструменты сборки C++ из Visual Studio
-(набор "Разработка классических приложений на C++").
+больше ей ничего не нужно (ни .NET, ни инструментов сборки).
 
 ```powershell
-# из копии исходников:
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Source . -Link make,rsync,dig -Completion pwsh,clink
-
-# из релиза (install.ps1 и SHA256SUMS.txt лежат на странице релиза; хеш - у wslbin-<тег>-source.zip;
-# -Repository равен quatrebi/wslbin, если не указать другой):
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v<версия> -Sha256 <хеш> -Link make,rsync,dig
+irm https://quatrebi.github.io/wslbin/install.ps1 | iex
 ```
 
-Windows по умолчанию не запускает скрипты, а скачанный `install.ps1` помечает как полученный из
-интернета: `-ExecutionPolicy Bypass` разрешает этот один запуск и больше ничего не меняет.
+Команда скачивает последний релиз, проверяет его и запускает установщик из него. В консоли она спросит,
+для кого ставить и подключать ли автодополнение; с параметрами (их принимает блок скрипта) ничего не
+спрашивает:
+
+```powershell
+& ([scriptblock]::Create((irm https://quatrebi.github.io/wslbin/install.ps1))) -Version 0.1.7 -Scope AllUsers -Link make,rsync,dig -Completion pwsh,clink -Quiet
+```
+
+Для первой строки то же делают переменные окружения `WSLBIN_VERSION` и `WSLBIN_SCOPE`. Скрипт можно
+прочитать до запуска: [`site/install.ps1`](site/install.ps1) короткий. Он читает с сайта список релизов
+(`releases.json`: адрес и SHA256 каждого архива), скачивает архив с GitHub Releases, сверяет SHA256 (хеш
+приходит с сайта, файл - с GitHub), с `-VerifyAttestation` проверяет ещё и то, где GitHub говорит, что
+он собран (нужна программа [gh](https://cli.github.com)), распаковывает архив во временную папку и
+запускает из него `setup\install.ps1`.
+
+В архиве (`wslbin-<версия>-win-x64.zip` на [странице релизов](https://github.com/quatrebi/wslbin/releases),
+рядом `.sha256` и `SHA256SUMS.txt`) лежат `wslbin.exe`, `LICENSE`, `manifest.json` (каждый файл с его
+SHA256) и `setup\install.ps1`, `setup\uninstall.ps1`: распакуйте его и запустите
+`.\setup\install.ps1 -Link make,rsync,dig -Completion pwsh,clink`, чтобы поставить без сети.
 
 `-Scope AllUsers` (по умолчанию пробуется первым) ставит wslbin в `C:\Program Files\wslbin`, в PATH
 машины, и просит права администратора (UAC). Копия с правами ставит только саму программу: `-Link` и
 `-Completion` делаются потом от вашего имени, в вашем WSL и ваших профилях (поэтому `-Link` ещё раз
 попросит права, чтобы записать обёртки). `-Scope CurrentUser` (запасной вариант, если в правах
-отказали) - `%LOCALAPPDATA%\Programs\wslbin` и PATH пользователя. `-Completion` подключает
-автодополнение в PowerShell (обе редакции) и Clink. `-Uninstall` убирает всё, в том числе блок для
-ИИ-агентов (ваш `wslbin.ini` остаётся). Остальное - `Get-Help .\install.ps1 -Full`.
+отказали) - `%LOCALAPPDATA%\Programs\wslbin` и PATH пользователя, права не нужны. `-Completion`
+подключает автодополнение в PowerShell (обе редакции) и Clink.
+
+**Обновление** - та же команда: она сравнивает версию с той, что записана в «Параметры → Приложения»,
+ставит более новую, для такой же пишет «уже установлена» (`-Force` поставит снова) и отказывается ставить
+более старую (`-Force` вернёт её). Файлы заменяются все вместе или ни один; работающие `wslbin.exe` и
+обёртки сначала переименовываются в `.old` и удаляются сразу или при следующем запуске. Ваш `wslbin.ini`
+не трогается.
+
+**Удаление**: «Параметры → Приложения → wslbin → Удалить» или `setup\uninstall.ps1` в папке установки
+(`-Quiet` ничего не спрашивает, `-Purge` удаляет и `wslbin.ini`). Убираются обёртки, запись в PATH,
+файлы, запись в «Приложениях», подключения в профилях и Clink и блок для ИИ-агентов. Больше установщик
+в реестр ничего не пишет.
 
 Дальше:
 
@@ -90,7 +111,7 @@ wslbin --list              # обёртки и что с ними не так
 Варианты берутся из bash-completion в WSL, поэтому `rsync --<Tab>`, `make <Tab>` или `man <Tab>` дают то
 же, что в Linux, а пути Windows работают в обе стороны (`C:\Prog` становится `C:\Program Files\`).
 В PowerShell строку `wslbin --init pwsh | Invoke-Expression` кладут в профиль; в cmd - `wslbin --init clink`
-(нужен [Clink](https://chrisant996.github.io/clink/)). `install.ps1 -Completion pwsh,clink` делает и то,
+(нужен [Clink](https://chrisant996.github.io/clink/)). Установщик с `-Completion pwsh,clink` делает и то,
 и другое. Строка для PowerShell ещё и убирает псевдонимы, которые закрыли бы обёртку (`ls`, `cat`,
 `rm`, ...), на весь сеанс и для всех скриптов в нём: делайте обёртки только для тех имён, которые
 должны означать Linux-утилиту.
@@ -134,7 +155,8 @@ data/              утилиты, у которых есть своя верс�
 wsl/complete.sh    помощник автодополнения, работает в WSL
 shell/             код для PowerShell и Clink, который заполняет "wslbin --init"
 docs/en  docs/ru   тексты справки (вшиваются в .exe)
-install.ps1        установщик и удаление
+setup/             install.ps1, uninstall.ps1 и общее для них: входят в архив релиза
+site/              сайт (GitHub Pages): лендинг и install.ps1, загрузчик
 build.ps1          сборка (dotnet publish, Native AOT)
 get-version.ps1    версия сборки; её функции - в Wslbin.Version.psm1
 tests/             тесты Pester

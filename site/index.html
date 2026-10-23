@@ -245,32 +245,32 @@ footer .r { margin-left: auto; }
     <section id="install">
       <h2><span data-l="en">Install</span><span data-l="ru">Установка</span></h2>
       <p class="sub">
-        <span data-l="en">The installer builds the program from the release source, so it needs the .NET SDK 10 and the Visual Studio C++ build tools.</span>
-        <span data-l="ru">Установщик собирает программу из исходников релиза, поэтому нужны .NET SDK 10 и C++ build tools из Visual Studio.</span>
+        <span data-l="en">One command downloads the latest release, checks its SHA256 and runs the installer from it. Nothing to build, no .NET needed.</span>
+        <span data-l="ru">Одна команда скачивает последний релиз, сверяет его SHA256 и запускает установщик из него. Собирать ничего не нужно, .NET не нужен.</span>
       </p>
       <ol class="steps">
         <li data-n="1">
-          <h3><span data-l="en">Download the release files</span><span data-l="ru">Скачайте файлы релиза</span></h3>
-          <p><span data-l="en">You need <code class="i">install.ps1</code> and <code class="i">SHA256SUMS.txt</code> from the latest release.</span><span data-l="ru">Нужны <code class="i">install.ps1</code> и <code class="i">SHA256SUMS.txt</code> из последнего релиза.</span></p>
-          <div class="links">
-            <a class="btn primary" href="https://github.com/quatrebi/wslbin/releases/latest"><span data-l="en">Latest release</span><span data-l="ru">Последний релиз</span></a>
-            <a class="btn" href="https://github.com/quatrebi/wslbin/archive/refs/heads/main.zip"><span data-l="en">Source zip (main)</span><span data-l="ru">Исходники zip (main)</span></a>
-          </div>
-        </li>
-        <li data-n="2">
           <h3><span data-l="en">Run the installer</span><span data-l="ru">Запустите установщик</span></h3>
-          <p><span data-l="en">Use the tag of the release and the hash of its source archive from <code class="i">SHA256SUMS.txt</code>.</span><span data-l="ru">Подставьте тег релиза и хеш его архива исходников из <code class="i">SHA256SUMS.txt</code>.</span></p>
+          <p><span data-l="en">In a console it asks for whom to install and whether to hook Tab completion in.</span><span data-l="ru">В консоли он спросит, для кого ставить и подключать ли автодополнение.</span></p>
           <div class="code">
             <button class="copy" type="button" id="copy"><span data-l="en">Copy</span><span data-l="ru">Копировать</span></button>
-<pre id="cmd">powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 `
-  -Version v&lt;version&gt; -Sha256 &lt;hash&gt; `
-  -Link make,rsync,dig -Completion pwsh,clink</pre>
+<pre id="cmd">irm https://quatrebi.github.io/wslbin/install.ps1 | iex</pre>
           </div>
+          <p style="margin-top:12px"><span data-l="en">With parameters (a version, the scope, utilities to link, completion):</span><span data-l="ru">С параметрами (версия, область, утилиты для обёрток, автодополнение):</span></p>
+          <div class="code"><pre>&amp; ([scriptblock]::Create((irm https://quatrebi.github.io/wslbin/install.ps1))) `
+  -Version 0.1.7 -Scope AllUsers -Link make,rsync,dig -Completion pwsh,clink -Quiet</pre></div>
         </li>
-        <li data-n="3">
+        <li data-n="2">
           <h3><span data-l="en">Check it</span><span data-l="ru">Проверьте</span></h3>
           <div class="code"><pre><span class="p">PS&gt;</span> wslbin --doctor</pre></div>
-          <p style="margin-top:12px"><span data-l="en">More in the <a href="https://github.com/quatrebi/wslbin#readme">README</a>: scopes, configuration, build from source.</span><span data-l="ru">Подробнее в <a href="https://github.com/quatrebi/wslbin#readme">README</a>: области установки, настройка, сборка из исходников.</span></p>
+        </li>
+        <li data-n="3">
+          <h3><span data-l="en">Update or remove</span><span data-l="ru">Обновление и удаление</span></h3>
+          <p><span data-l="en">Update: run the same command again. Remove: Settings &rarr; Apps &rarr; wslbin &rarr; Uninstall.</span><span data-l="ru">Обновление: та же команда ещё раз. Удаление: «Параметры» &rarr; «Приложения» &rarr; wslbin &rarr; «Удалить».</span></p>
+          <div class="links">
+            <a class="btn" href="https://github.com/quatrebi/wslbin/releases/latest"><span data-l="en">Releases (zip, SHA256)</span><span data-l="ru">Релизы (zip, SHA256)</span></a>
+          </div>
+          <p style="margin-top:12px"><span data-l="en">More in the <a href="https://github.com/quatrebi/wslbin#readme">README</a>: scopes, offline install from the zip, configuration, build from source.</span><span data-l="ru">Подробнее в <a href="https://github.com/quatrebi/wslbin#readme">README</a>: области установки, установка из архива без сети, настройка, сборка из исходников.</span></p>
         </li>
       </ol>
     </section>

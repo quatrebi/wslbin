@@ -77,6 +77,13 @@ Describe 'wslbin --help' {
         (Invoke-Help -Arguments @('--help') -Lang 'en').Out | Should -Not -Match $script:Cyrillic
     }
 
+    It 'answers in the language of Windows with lang = auto' {
+        # (on an English Windows this tells nothing from "always English"; on a Russian one it does)
+        $want = if ([Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'ru') { 'ru' } else { 'en' }
+        $r = Invoke-Help -Arguments @('--help') -Lang 'auto'
+        $r.Out.Replace("`r", '') | Should -BeExactly ((Read-Doc $want 'help.txt').TrimEnd("`n") + "`n")
+    }
+
     It 'warns about a language it does not have and uses the language of Windows' {
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:Home1 -Ini "lang = klingon`n" -Arguments @('--help')
         $r.Err | Should -Match 'lang must be en, ru or auto'
@@ -143,13 +150,14 @@ Describe 'the texts in docs/' {
 
 Describe 'the READMEs' {
     BeforeAll {
-        $script:InstallParameters = @((Get-Command (Join-Path $script:Repo 'install.ps1')).Parameters.Keys)
+        # the README names the loader of the site and the scripts of the package: any of their parameters will do
+        $script:InstallParameters = @('site\install.ps1', 'setup\install.ps1', 'setup\uninstall.ps1' | ForEach-Object { (Get-Command (Join-Path $script:Repo $_)).Parameters.Keys } | Sort-Object -Unique)
         function Read-Readme([string]$name) { [IO.File]::ReadAllText((Join-Path $script:Repo $name), [Text.UTF8Encoding]::new($false)).Replace("`r`n", "`n") }
         function Get-WslbinOptions([string]$text) {
             [regex]::Matches($text, 'wslbin (--[a-z][a-z-]*)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
         }
         function Get-InstallParameters([string]$text) {
-            # the parameters written after install.ps1 on a line; "Get-Help .\install.ps1 -Full" is Get-Help's
+            # the parameters written after install.ps1 or uninstall.ps1 on a line; lines with Get-Help are Get-Help's
             $names = foreach ($m in [regex]::Matches($text, '(?m)^(?<line>[^\n]*install\.ps1[^\n`]*)')) {
                 if ($m.Groups['line'].Value -match 'Get-Help') { continue }
                 $after = $m.Groups['line'].Value.Substring($m.Groups['line'].Value.IndexOf('install.ps1'))
@@ -183,6 +191,22 @@ Describe 'the READMEs' {
     It 'describe the same sections in both languages' {
         $headings = { param($t) @([regex]::Matches($t, '(?m)^## ').Count) }
         (& $headings (Read-Readme 'README.ru.md')) | Should -Be (& $headings (Read-Readme 'README.md'))
+    }
+
+    It '<File> opens every code block with three backticks and closes it' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }) {
+        $text = Read-Readme $File
+        # a block opened with one backtick ("`powershell") pairs every fence after it the wrong way round
+        [regex]::Matches($text, '(?m)^`[a-z]+$').Count | Should -Be 0
+        @([regex]::Matches($text, '(?m)^```')).Count % 2 | Should -Be 0
+    }
+}
+
+Describe 'the help text of wslbin.ini' {
+    It 'names auto as a value of lang (<Lang>)' -ForEach @(@{ Lang = 'en' }, @{ Lang = 'ru' }) {
+        $text = Read-Doc $Lang 'config.txt'
+        $line = ($text -split "`n" | Where-Object { $_ -match '^\s+lang = ' } | Select-Object -First 1)
+        $after = $text.Substring($text.IndexOf($line) + $line.Length)
+        ($after -split "`n" | Select-Object -First 3) -join ' ' | Should -Match '\bauto\b'
     }
 }
 Describe 'wslbin --ai-context' {

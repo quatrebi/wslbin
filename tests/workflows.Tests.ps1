@@ -456,6 +456,11 @@ Describe 'release.yml' {
         $script:PagesJob | Should -Match 'uses: \./\.github/workflows/pages\.yml'
         $script:Rel | Should -Not -Match '(?m)^\s*group: pages'
     }
+    It 'asks the site, after the deployment, for a loader that irm takes for text' {
+        $script:ProbeJob | Should -Match '/install\.ps1\?run='
+        $script:ProbeJob | Should -Match '-isnot \[string\]'
+        $script:ProbeJob | Should -Match "StartsWith\('# wslbin loader'\)"
+    }
     It 'asks the site, after the deployment, for the version that was released' {
         $script:ProbeJob | Should -Match 'PAGE_URL: \$\{\{ needs\.pages\.outputs\.page_url \}\}'
         $script:ProbeJob | Should -Match 'VERSION: \$\{\{ needs\.build\.outputs\.version \}\}'
