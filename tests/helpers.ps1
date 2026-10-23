@@ -218,3 +218,28 @@ function Get-IsolatedPath {
     param([string]$First)
     "$First;$env:SystemRoot\System32"
 }
+
+# What the Clink test types, and the bash command that each completed line must stand for.
+# A function, because Pester needs the list both when it collects the tests and when it runs them.
+function Get-ClinkCases {
+    $ru = -join ([char[]](0x0444, 0x0430, 0x0439, 0x043B))        # "файл"
+    $ruStart = $ru.Substring(0, 2)
+    @(
+        @{ Typed = 'rsync --wslbin-explain --arch';                           Want = 'rsync --archive' }
+        @{ Typed = 'rsync --wslbin-explain -av C:\Windows\win.i';             Want = 'rsync -av /mnt/c/Windows/win.ini' }
+        @{ Typed = 'rsync --wslbin-explain -av c:\windows\win.i';             Want = 'rsync -av /mnt/c/windows/win.ini' }
+        # what Tab writes is a relative path with backslashes that exists in the folder, so it arrives as a Linux one
+        @{ Typed = 'rsync --wslbin-explain -av alpha';                        Want = 'rsync -av alpha\ one/' }
+        @{ Typed = 'rsync --wslbin-explain -av ".\alpha one\inn';             Want = 'rsync -av ./alpha\ one/inner\ file.txt' }
+        @{ Typed = "rsync --wslbin-explain -av .\$ruStart";                   Want = "rsync -av ./$ru-note.txt" }
+        @{ Typed = 'rsync --wslbin-explain --exclude-from=C:\Windows\win.i';  Want = 'rsync --exclude-from=/mnt/c/Windows/win.ini' }
+        @{ Typed = 'rsync --wslbin-explain --exclude-from=alpha';             Want = 'rsync --exclude-from=alpha\ one/' }
+        @{ Typed = 'wslbin --explain rsy';                                    Want = 'rsync' }
+        # a name that cmd.exe would split at & goes in quotes; without them cmd would run "ver.txt" too
+        @{ Typed = 'rsync --wslbin-explain x';                                Want = 'rsync x\&ver.txt' }
+        # a Linux name with " would close those quotes: it is not offered, and the line stays as typed
+        # (the file is made in WSL by the test: /tmp/wslbin-clink-q"&ver"x)
+        @{ Typed = 'rsync --wslbin-explain /tmp/wslbin-clink-q';              Want = 'rsync /tmp/wslbin-clink-q' }
+        @{ Typed = 'rsync --wslbin-explain --nosuchoption';                   Want = 'rsync --nosuchoption' }
+    )
+}

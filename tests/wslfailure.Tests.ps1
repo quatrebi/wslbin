@@ -162,6 +162,16 @@ Describe 'messages of wsl.exe' {
 }
 
 Describe 'a wsl.exe that does not answer, or a wrapper that is stopped' {
+    It 'Tab completion gives up after a while and offers nothing' {
+        $wsl = New-FakeWsl -Files @{ 'run.sleep' = '60000' }
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--complete', '1', 'tool', 'x')
+        $watch.Elapsed.TotalSeconds | Should -BeLessThan 30
+        $r.ExitCode | Should -Be 0
+        $r.Out | Should -BeNullOrEmpty
+        $fake = [int](Get-Content (Join-Path $wsl.FAKE_WSL_DIR 'pid.txt'))
+        Get-Process -Id $fake -ErrorAction SilentlyContinue | Should -BeNullOrEmpty -Because 'the stand-in for wsl.exe is stopped'
+    }
 
     It 'stops wsl.exe when the wrapper is stopped (by a timeout of its caller, say)' {
         $wsl = New-FakeWsl -Files @{ 'run.sleep' = '60000' }
@@ -257,5 +267,13 @@ Describe 'a folder that has no Linux path' {
         $r.ExitCode | Should -Be 0
         $r.Out | Should -BeExactly "rm *.log`n"
         $r.Err | Should -Match 'has no Linux path.*would not run'
+    }
+
+    It 'Tab completion offers nothing there, and does not ask WSL' {
+        if ($script:NoUnc) { Set-ItResult -Skipped -Because "$script:Unc cannot be reached"; return }
+        $wsl = New-FakeWsl -Files @{ 'run.out' = "candidate`n" }
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--complete', '1', 'rm', 'x') -WorkingDirectory $script:Unc
+        $r.Out | Should -BeNullOrEmpty
+        Get-Calls $wsl | Should -BeNullOrEmpty
     }
 }

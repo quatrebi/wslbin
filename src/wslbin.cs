@@ -17,6 +17,9 @@
 //                       Windows), Conflicts (names that Windows already uses), Elevation (administrator rights)
 //   WrapperCommands.cs  WrapperCommands: --link, --unlink, --list; Apt: installing a utility that WSL lacks
 //   Doctor.cs           Doctor: --doctor
+//   Help.cs             Resources: texts built into the .exe (build.ps1)
+//   Completion.cs       Completion: --complete, Tab completion for the shells
+//   Init.cs             Init: --init pwsh | clink
 //   Out.cs              Out: console output that does not depend on the console code page
 
 using System;
@@ -75,12 +78,15 @@ namespace Wslbin
         internal const string RawFlag = "--wslbin-raw";
         internal const string ShFlag = "--wslbin-sh";
         internal const string ExplainFlag = "--wslbin-explain";
+        internal static readonly string[] WrapperFlags = { RawFlag, ShFlag, ExplainFlag };
 
         // The options of "wslbin [--raw | --sh] [--explain] <utility>" and "wslbin -c".
         internal const string RawOption = "--raw";
         internal const string ShOption = "--sh";
         internal const string ExplainOption = "--explain";
         internal const string ScriptOption = "-c";
+        internal static readonly string[] ModeOptions = { RawOption, ShOption, ExplainOption };
+        internal static readonly string[] RunOptions = { RawOption, ShOption, ExplainOption, ScriptOption };
 
         // The version is the one in AssemblyInformationalVersion above, so a release changes it there only
         // (and in the two numeric attributes next to it).
@@ -91,6 +97,7 @@ namespace Wslbin
         sealed class Command
         {
             public string Name;
+            public bool Hidden;                     // not offered by Tab completion: for shells, or for wslbin itself
             public Func<IList<string>, int> Run;    // gets the arguments after the name
         }
 
@@ -105,10 +112,24 @@ namespace Wslbin
                 new Command { Name = "--unlink", Run = a => WrapperCommands.Unlink(a, exePath) },
                 new Command { Name = "--list", Run = a => WrapperCommands.List(a, exePath, config()) },
                 new Command { Name = "--doctor", Run = a => Doctor.Run(a, exePath) },
+                new Command { Name = "--init", Run = a => Init.Run(a, exePath) },
+                new Command { Name = "--complete", Hidden = true, Run = a => Completion.Run(a, exePath) },
                 // the elevated halves of --link and --unlink; not for people
-                new Command { Name = "--internal-link", Run = a => WrapperCommands.InternalLink(a, exePath) },
-                new Command { Name = "--internal-unlink", Run = a => WrapperCommands.InternalUnlink(a, exePath) }
+                new Command { Name = "--internal-link", Hidden = true, Run = a => WrapperCommands.InternalLink(a, exePath) },
+                new Command { Name = "--internal-unlink", Hidden = true, Run = a => WrapperCommands.InternalUnlink(a, exePath) }
             };
+        }
+
+        // What "wslbin <Tab>" offers.
+        internal static List<string> OfferedOptions()
+        {
+            var names = new List<string>();
+            foreach (Command c in Commands(""))
+            {
+                if (!c.Hidden) names.Add(c.Name);
+            }
+            names.AddRange(RunOptions);
+            return names;
         }
 
         static int PrintVersion(IList<string> args)
