@@ -1,11 +1,15 @@
-# Builds wslbin and runs the tests that need neither WSL nor Clink (there is no WSL 2 on the hosted
-# runners; the tests tagged WSL, Clink included, run on a developer's machine). The escaping is still
-# checked by a real bash here: the runners have Git Bash, and tests/wslbin.Tests.ps1 runs the
-# commands that --wslbin-explain prints in it.
+# Builds the program and runs the tests on every push to main and develop and on every pull request.
 #
-# Not run yet: the repository has not been pushed to GitHub. The actions are pinned to the commit of
-# a release tag (checked with "git ls-remote --tags" on 2026-10-21; the comment names the tag).
-# To move to a newer version, look up its commit the same way.
+# The version of a build is worked out from git (get-version.ps1), so that a push to a branch, a pull
+# request and a release never share one. The program is kept as an artifact for 14 days, before the tests
+# run, so that a red test run still leaves it. The tests that need WSL do not run here (the runners have
+# none); the escaping is still checked by the Git Bash that the runners have.
+#
+# What anyone can choose (the name of a branch, the number of a pull request) reaches the scripts through
+# env: only, never pasted into the text of a run:; tests/workflows.Tests.ps1 checks that. The actions are
+# pinned to the commit of a release tag (the comment names the tag); look up a new one with
+#   git ls-remote --tags https://github.com/<owner>/<action> refs/tags/<tag>
+# Not run on GitHub yet: the repository has not been pushed.
 name: CI
 
 on:
@@ -16,17 +20,66 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  build-and-test:
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
+      # the whole history, because PATCH of the version is counted from it; for a pull request the head
+      # of its branch, not the merge commit that GitHub makes (it will not exist after the merge)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Build with the compiler that ships with Windows
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Version of this build
+        id: version
         shell: pwsh
-        run: ./build.ps1
+        env:
+          EVENT: ${{ github.event_name }}
+          BRANCH: ${{ github.ref_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_NUMBER: ${{ github.run_number }}
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if ($env:EVENT -eq 'pull_request') {
+              $version = ./get-version.ps1 -Kind pr -PullRequest $env:PR_NUMBER -Run $env:RUN_NUMBER -Commit $env:COMMIT
+          }
+          else {
+              $version = ./get-version.ps1 -Kind branch -Branch $env:BRANCH -Run $env:RUN_NUMBER -Commit $env:COMMIT
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "version $version"
+
+      - name: Build (Native AOT)
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./build.ps1 -Version $env:VERSION
+
+      - name: The program says the version that was asked for
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: ./.github/check-version.ps1
+
+      - name: Keep the program
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wslbin-${{ steps.version.outputs.version }}
+          path: bin/wslbin.exe
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: true   # a re-run of the same run number has the same name
 
       - name: Pester 5 or later
         shell: pwsh

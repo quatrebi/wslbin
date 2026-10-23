@@ -303,28 +303,6 @@ public static class CommandLineParser
     }
 }
 
-Describe 'release.yml: the tag must be the version' {
-    It 'accepts the tag of the version that wslbin.exe reports, and refuses any other' {
-        $tree = Join-Path $global:WslbinTest.Work ('release-' + [guid]::NewGuid().ToString('N'))
-        New-Item -ItemType Directory -Path (Join-Path $tree '.github'), (Join-Path $tree 'bin') | Out-Null
-        Copy-Item (Join-Path $script:Repo '.github\check-version.ps1') (Join-Path $tree '.github')
-        # a release is built with the version of its tag (the build of the checkout has a suffix, +commit)
-        $built = Join-Path $tree 'bin\wslbin.exe'
-        $null = & (Join-Path $script:Repo 'build.ps1') -Output $built -Version '5.6.7' 6>$null
-        $version = ((& $built --version) -replace '^wslbin ', '').Trim()
-        $version | Should -BeExactly '5.6.7'
-        $check = {
-            param([string]$Tag)
-            $env:TAG = $Tag
-            try { & pwsh -NoProfile -File (Join-Path $tree '.github\check-version.ps1') 2>&1 | Out-Null; $LASTEXITCODE }
-            finally { Remove-Item Env:TAG }
-        }
-        & $check "v$version" | Should -Be 0
-        & $check 'v9.9.9' | Should -Not -Be 0
-        & $check "v$version'; exit 0; '" | Should -Not -Be 0
-    }
-}
-
 Describe 'install.ps1: small helpers' {
     It 'tells a right hash from a wrong one' {
         $f = Join-Path $global:WslbinTest.Work 'hash-me.txt'

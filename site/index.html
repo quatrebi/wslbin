@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wslbin: Linux utilities as Windows programs</title>
+<meta name="description" content="Run rsync, make, dig and other Linux tools from WSL in PowerShell, cmd or any IDE, with Windows paths, wildcards, pipes and exit codes working as expected.">
+<meta property="og:title" content="wslbin">
+<meta property="og:description" content="Linux utilities from WSL as ordinary Windows programs.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1720'/%3E%3Cpath d='M8 11l7 5-7 5' fill='none' stroke='%23ffb454' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M18 22h7' stroke='%2354a0ff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<script>
+/* set the theme before the first paint, so there is no flash */
+try { var t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+</script>
+<style>
+/* Windows side is blue, Linux side is amber: the colours carry the meaning on the whole page. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #131f2a;
+  --muted: #526273;
+  --line: #d9e0e8;
+  --win: #1560bd;
+  --win-soft: #e4eefb;
+  --accent-ink: #ffffff;
+  --term: #0f1720;
+  --term-ink: #dbe5ef;
+  --term-dim: #7d8fa3;
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c1218; --surface: #131b24; --ink: #e8eef4; --muted: #9aabbc; --line: #232f3c;
+    --win: #5aa6ff; --win-soft: #14283f; --accent-ink: #06182e; --term: #070c11;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c1218; --surface: #131b24; --ink: #e8eef4; --muted: #9aabbc; --line: #232f3c;
+  --win: #5aa6ff; --win-soft: #14283f; --accent-ink: #06182e; --term: #070c11;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: var(--win); }
+:focus-visible { outline: 3px solid var(--win); outline-offset: 3px; border-radius: 4px; }
+code, pre { font-family: var(--mono); }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+html[lang="en"] [data-l="ru"], html[lang="ru"] [data-l="en"] { display: none !important; }
+
+/* header */
+header.top { display: flex; align-items: center; gap: 18px; padding: 18px 0; }
+.logo { font: 700 20px var(--mono); color: var(--ink); text-decoration: none; margin-right: auto; }
+.logo b { color: var(--win); }
+a.nav { color: var(--muted); text-decoration: none; font-size: 15px; }
+a.nav:hover { color: var(--ink); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; padding: 2px; background: var(--surface); }
+.seg button { width: 30px; height: 28px; border: 0; background: none; color: var(--muted); border-radius: 7px; cursor: pointer;
+  display: grid; place-items: center; padding: 0; }
+.seg button svg { width: 16px; height: 16px; }
+.seg button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"] { background: var(--win-soft); color: var(--win); }
+.lang { font: 600 13px var(--sans); background: var(--surface); border: 1px solid var(--line); color: var(--ink);
+  border-radius: 9px; height: 34px; padding: 0 11px; cursor: pointer; }
+.lang:hover { border-color: var(--win); }
+@media (max-width: 600px) { a.nav.hide-s { display: none; } header.top { gap: 10px; } }
+
+/* hero */
+.hero { padding: 52px 0 40px; }
+h1 { font-size: clamp(34px, 5.6vw, 58px); line-height: 1.06; letter-spacing: -0.025em; margin: 0 0 20px; font-weight: 760; max-width: 15em; }
+.lead { font-size: 19px; color: var(--muted); max-width: 36em; margin: 0 0 28px; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn { display: inline-flex; align-items: center; padding: 12px 22px; border-radius: 10px; font-weight: 600;
+  text-decoration: none; border: 1px solid var(--line); color: var(--ink); background: var(--surface); }
+.btn:hover { border-color: var(--win); }
+.btn.primary { background: var(--win); border-color: var(--win); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.1); }
+.note { margin: 14px 0 0; font-size: 14px; color: var(--muted); }
+code.i { font-size: .88em; background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; white-space: nowrap; }
+
+/* the translator: what you type, and what bash gets */
+.tr { margin: 8px 0 0; background: var(--term); color: var(--term-ink); border-radius: 14px; overflow: hidden;
+  box-shadow: 0 20px 50px -28px rgba(10, 30, 60, .6); }
+.tr-bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid #ffffff14; font: 13px var(--mono); color: var(--term-dim); }
+.tr-bar i { width: 11px; height: 11px; border-radius: 50%; background: #ffffff26; }
+.tr-bar span { margin-left: 8px; }
+.tr-head, .tr-row { display: grid; grid-template-columns: 1fr 1fr; }
+.tr-head div { padding: 12px 20px 0; font: 600 13px var(--sans); }
+.tr-head .w { color: #7fb7ff; }
+.tr-head .l { color: #ffbd69; }
+.tr-row { font-size: 14px; }
+.tr-row > div { padding: 12px 20px; overflow-x: auto; white-space: pre; }
+.tr-row > div + div, .tr-head div + div { border-left: 1px solid #ffffff14; }
+.tr-row .p { color: #7fb7ff; }
+.tr-row mark { background: #ffb4541f; color: #ffcf8f; border-radius: 4px; padding: 1px 3px; }
+.tr-row .keep { color: var(--term-dim); }
+.tr-foot { padding: 14px 20px; border-top: 1px solid #ffffff14; font-size: 14px; color: var(--term-dim); }
+.tr-foot b { color: var(--term-ink); font-weight: 600; }
+
+/* one entrance on load: the rows appear one after another */
+.tr-row { animation: show .5s ease backwards; animation-delay: calc(var(--i) * .5s + .3s); }
+@keyframes show { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .tr-row { animation: none; } html { scroll-behavior: auto; } }
+
+@media (max-width: 720px) {
+  .tr-head { display: none; }
+  .tr-row { grid-template-columns: 1fr; }
+  .tr-row > div + div { border-left: 0; border-top: 1px dashed #ffffff1f; }
+  .tr-row > div:first-child::before { content: "you type"; display: block; font: 600 12px var(--sans); color: #7fb7ff; margin-bottom: 2px; }
+  .tr-row > div + div::before { content: "bash gets"; display: block; font: 600 12px var(--sans); color: #ffbd69; margin-bottom: 2px; }
+}
+
+/* sections */
+section { padding: 72px 0 8px; }
+h2 { font-size: clamp(25px, 3.2vw, 32px); line-height: 1.15; letter-spacing: -0.015em; margin: 0 0 12px; }
+.sub { color: var(--muted); max-width: 38em; margin: 0 0 32px; }
+
+/* features: a list, not a grid of cards */
+.feat { margin: 0; border-top: 1px solid var(--line); }
+.feat > div { display: grid; grid-template-columns: 240px 1fr; gap: 8px 32px; padding: 20px 0; border-bottom: 1px solid var(--line); }
+.feat dt { font-weight: 650; }
+.feat dd { margin: 0; color: var(--muted); max-width: 40em; }
+@media (max-width: 680px) { .feat > div { grid-template-columns: 1fr; } }
+
+/* install: a real sequence */
+.steps { list-style: none; margin: 0; padding: 0; }
+.steps > li { position: relative; padding: 0 0 28px 48px; }
+.steps > li::before { content: attr(data-n); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 50%;
+  background: var(--win-soft); color: var(--win); font: 700 15px/30px var(--sans); text-align: center; }
+.steps > li::after { content: ""; position: absolute; left: 14px; top: 38px; bottom: 6px; width: 2px; background: var(--line); }
+.steps > li:last-child::after { display: none; }
+.steps h3 { margin: 2px 0 6px; font-size: 18px; }
+.steps p { margin: 0 0 12px; color: var(--muted); max-width: 40em; }
+.code { background: var(--term); color: var(--term-ink); border-radius: 12px; position: relative; }
+.code pre { margin: 0; padding: 16px 84px 16px 18px; font-size: 14px; line-height: 1.7; overflow-x: auto; }
+.code .p { color: #7fb7ff; }
+.copy { position: absolute; top: 10px; right: 10px; font: 600 13px var(--sans); background: #ffffff1a; color: var(--term-ink);
+  border: 0; border-radius: 7px; padding: 5px 11px; cursor: pointer; }
+.copy:hover { background: #ffffff30; }
+.links { display: flex; flex-wrap: wrap; gap: 10px; }
+
+footer { margin-top: 56px; border-top: 1px solid var(--line); padding: 26px 0 40px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; }
+footer a { color: var(--muted); }
+footer .r { margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="logo" href="#"><b>&gt;</b>wslbin</a>
+    <a class="nav hide-s" href="#features"><span data-l="en">Features</span><span data-l="ru">Возможности</span></a>
+    <a class="nav hide-s" href="#install"><span data-l="en">Install</span><span data-l="ru">Установка</span></a>
+    <a class="nav" href="https://github.com/quatrebi/wslbin">GitHub</a>
+    <div class="seg" role="group" aria-label="Theme" id="theme">
+      <button type="button" data-t="auto" title="Auto" aria-label="Auto theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg></button>
+      <button type="button" data-t="light" title="Light" aria-label="Light theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></svg></button>
+      <button type="button" data-t="dark" title="Dark" aria-label="Dark theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z"/></svg></button>
+    </div>
+    <button class="lang" id="lang" type="button" aria-label="Language">RU</button>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>
+        <span data-l="en">Linux tools from WSL, as plain Windows programs.</span>
+        <span data-l="ru">Linux-утилиты из WSL как обычные программы Windows.</span>
+      </h1>
+      <p class="lead">
+        <span data-l="en">Type <code class="i">rsync</code>, <code class="i">make</code> or <code class="i">dig</code> in PowerShell, cmd or an IDE terminal, or start them from any program. Windows paths, wildcards, pipes, colours, Ctrl+C and exit codes work as you expect.</span>
+        <span data-l="ru">Запускайте <code class="i">rsync</code>, <code class="i">make</code> и <code class="i">dig</code> в PowerShell, cmd или терминале IDE, либо из любой программы. Пути Windows, шаблоны, пайпы, цвета, Ctrl+C и коды возврата работают как надо.</span>
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/quatrebi/wslbin/releases/latest"><span data-l="en">Download</span><span data-l="ru">Скачать</span></a>
+        <a class="btn" href="https://github.com/quatrebi/wslbin"><span data-l="en">View on GitHub</span><span data-l="ru">Репозиторий на GitHub</span></a>
+      </div>
+      <p class="note">
+        <span data-l="en">Windows 10 22H2 or 11, WSL 2 with a distribution. MIT licence, no dependencies.</span>
+        <span data-l="ru">Windows 10 22H2 или 11, WSL 2 с дистрибутивом. Лицензия MIT, без зависимостей.</span>
+      </p>
+    </div>
+
+    <div class="tr" role="group" aria-label="Examples of what you type in PowerShell and the Linux command that bash gets">
+      <div class="tr-bar"><i></i><i></i><i></i><span>PowerShell &rarr; WSL</span></div>
+      <div class="tr-head">
+        <div class="w"><span data-l="en">You type in Windows</span><span data-l="ru">Вы вводите в Windows</span></div>
+        <div class="l"><span data-l="en">Bash gets in WSL</span><span data-l="ru">Bash получает в WSL</span></div>
+      </div>
+      <div class="tr-row" style="--i:0">
+        <div><span class="p">PS&gt;</span> rsync -av *.log C:\backup\</div>
+        <div>rsync -av *.log <mark>/mnt/c/backup/</mark></div>
+      </div>
+      <div class="tr-row" style="--i:1">
+        <div><span class="p">PS&gt;</span> rsync -av C:\proj\dist\ host:/srv/app/</div>
+        <div>rsync -av <mark>/mnt/c/proj/dist/</mark> host:/srv/app/</div>
+      </div>
+      <div class="tr-row" style="--i:2">
+        <div><span class="p">PS&gt;</span> make build; $LASTEXITCODE</div>
+        <div><span class="keep">exit code of make, unchanged</span></div>
+      </div>
+      <div class="tr-foot">
+        <span data-l="en"><b>*</b> is left for bash to expand by Linux rules. Everything else you type, such as <b>$ ; | &amp;</b>, quotes and spaces, reaches the utility literally.</span>
+        <span data-l="ru"><b>*</b> остаётся для bash, он раскроет её по правилам Linux. Всё остальное, например <b>$ ; | &amp;</b>, кавычки и пробелы, доходит до утилиты как есть.</span>
+      </div>
+    </div>
+
+    <section id="features">
+      <h2><span data-l="en">One small .exe per utility</span><span data-l="ru">Один маленький .exe на каждую утилиту</span></h2>
+      <p class="sub">
+        <span data-l="en">Each wrapped utility is a copy of <code class="i">wslbin.exe</code> named after it. Input and output are not intercepted, so pipes and full-screen programs work.</span>
+        <span data-l="ru">Каждая утилита это копия <code class="i">wslbin.exe</code> с её именем. Ввод и вывод не перехватываются, поэтому пайпы и полноэкранные программы работают.</span>
+      </p>
+      <dl class="feat">
+        <div>
+          <dt><span data-l="en">Safe by default</span><span data-l="ru">Безопасно по умолчанию</span></dt>
+          <dd><span data-l="en">Only <code class="i">*</code>, <code class="i">?</code>, <code class="i">[...]</code> and a leading <code class="i">~</code> reach bash unescaped. An argument can never run a second command.</span><span data-l="ru">В bash без экранирования попадают только <code class="i">*</code>, <code class="i">?</code>, <code class="i">[...]</code> и начальная <code class="i">~</code>. Аргумент не может запустить вторую команду.</span></dd>
+        </div>
+        <div>
+          <dt><span data-l="en">Three modes</span><span data-l="ru">Три режима</span></dt>
+          <dd><span data-l="en">Smart by default, <code class="i">--wslbin-raw</code> for exact arguments, <code class="i">--wslbin-sh</code> for Linux variables and <code class="i">$(...)</code>.</span><span data-l="ru">По умолчанию умный, <code class="i">--wslbin-raw</code> для точных аргументов, <code class="i">--wslbin-sh</code> для переменных Linux и <code class="i">$(...)</code>.</span></dd>
+        </div>
+        <div>
+          <dt><span data-l="en">See before you run</span><span data-l="ru">Посмотрите до запуска</span></dt>
+          <dd><span data-l="en"><code class="i">--wslbin-explain</code> prints the exact bash command and runs nothing.</span><span data-l="ru"><code class="i">--wslbin-explain</code> печатает точную команду bash и ничего не запускает.</span></dd>
+        </div>
+        <div>
+          <dt><span data-l="en">Tab completion</span><span data-l="ru">Автодополнение по Tab</span></dt>
+          <dd><span data-l="en">Variants come from bash-completion in WSL, in PowerShell and in cmd with Clink. <code class="i">C:\Prog</code> completes to <code class="i">C:\Program Files\</code>.</span><span data-l="ru">Варианты берутся из bash-completion в WSL, в PowerShell и в cmd через Clink. <code class="i">C:\Prog</code> дополняется до <code class="i">C:\Program Files\</code>.</span></dd>
+        </div>
+        <div>
+          <dt><span data-l="en">Check and manage</span><span data-l="ru">Проверка и управление</span></dt>
+          <dd><span data-l="en"><code class="i">wslbin --doctor</code> checks the setup. <code class="i">--link</code> adds wrappers and offers to install missing utilities with apt.</span><span data-l="ru"><code class="i">wslbin --doctor</code> проверяет настройку. <code class="i">--link</code> добавляет обёртки и предлагает поставить недостающие утилиты через apt.</span></dd>
+        </div>
+        <div>
+          <dt><span data-l="en">Made for AI agents too</span><span data-l="ru">И для ИИ-агентов</span></dt>
+          <dd><span data-l="en"><code class="i">wslbin --install-ai-context</code> tells Claude Code and Codex how to call Linux tools on your machine.</span><span data-l="ru"><code class="i">wslbin --install-ai-context</code> объясняет Claude Code и Codex, как вызывать Linux-утилиты на вашей машине.</span></dd>
+        </div>
+      </dl>
+    </section>
+
+    <section id="install">
+      <h2><span data-l="en">Install</span><span data-l="ru">Установка</span></h2>
+      <p class="sub">
+        <span data-l="en">The installer builds the program from the release source, so it needs the .NET SDK 10 and the Visual Studio C++ build tools.</span>
+        <span data-l="ru">Установщик собирает программу из исходников релиза, поэтому нужны .NET SDK 10 и C++ build tools из Visual Studio.</span>
+      </p>
+      <ol class="steps">
+        <li data-n="1">
+          <h3><span data-l="en">Download the release files</span><span data-l="ru">Скачайте файлы релиза</span></h3>
+          <p><span data-l="en">You need <code class="i">install.ps1</code> and <code class="i">SHA256SUMS.txt</code> from the latest release.</span><span data-l="ru">Нужны <code class="i">install.ps1</code> и <code class="i">SHA256SUMS.txt</code> из последнего релиза.</span></p>
+          <div class="links">
+            <a class="btn primary" href="https://github.com/quatrebi/wslbin/releases/latest"><span data-l="en">Latest release</span><span data-l="ru">Последний релиз</span></a>
+            <a class="btn" href="https://github.com/quatrebi/wslbin/archive/refs/heads/main.zip"><span data-l="en">Source zip (main)</span><span data-l="ru">Исходники zip (main)</span></a>
+          </div>
+        </li>
+        <li data-n="2">
+          <h3><span data-l="en">Run the installer</span><span data-l="ru">Запустите установщик</span></h3>
+          <p><span data-l="en">Use the tag of the release and the hash of its source archive from <code class="i">SHA256SUMS.txt</code>.</span><span data-l="ru">Подставьте тег релиза и хеш его архива исходников из <code class="i">SHA256SUMS.txt</code>.</span></p>
+          <div class="code">
+            <button class="copy" type="button" id="copy"><span data-l="en">Copy</span><span data-l="ru">Копировать</span></button>
+<pre id="cmd">powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 `
+  -Version v&lt;version&gt; -Sha256 &lt;hash&gt; `
+  -Link make,rsync,dig -Completion pwsh,clink</pre>
+          </div>
+        </li>
+        <li data-n="3">
+          <h3><span data-l="en">Check it</span><span data-l="ru">Проверьте</span></h3>
+          <div class="code"><pre><span class="p">PS&gt;</span> wslbin --doctor</pre></div>
+          <p style="margin-top:12px"><span data-l="en">More in the <a href="https://github.com/quatrebi/wslbin#readme">README</a>: scopes, configuration, build from source.</span><span data-l="ru">Подробнее в <a href="https://github.com/quatrebi/wslbin#readme">README</a>: области установки, настройка, сборка из исходников.</span></p>
+        </li>
+      </ol>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>MIT &copy; 2026 Dmitriy Khudnitskiy</span>
+    <a href="https://github.com/quatrebi/wslbin">GitHub</a>
+    <a href="https://github.com/quatrebi/wslbin/issues">Issues</a>
+    <a class="r" href="https://github.com/quatrebi/wslbin/blob/main/LICENSE">LICENSE</a>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  function store(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
+  function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+  /* theme: auto (follow the system), light, dark */
+  var tbtns = document.querySelectorAll('#theme button');
+  function setTheme(t) {
+    if (t === 'light' || t === 'dark') { root.setAttribute('data-theme', t); store('theme', t); }
+    else { root.removeAttribute('data-theme'); store('theme', null); t = 'auto'; }
+    for (var i = 0; i < tbtns.length; i++) tbtns[i].setAttribute('aria-pressed', tbtns[i].getAttribute('data-t') === t);
+  }
+  for (var i = 0; i < tbtns.length; i++) tbtns[i].addEventListener('click', function () { setTheme(this.getAttribute('data-t')); });
+  setTheme(load('theme'));
+
+  /* language */
+  var btn = document.getElementById('lang');
+  function setLang(l) { root.lang = l; btn.textContent = l === 'en' ? 'RU' : 'EN'; store('lang', l); }
+  var saved = load('lang');
+  setLang(saved || ((navigator.language || '').toLowerCase().indexOf('ru') === 0 ? 'ru' : 'en'));
+  btn.addEventListener('click', function () { setLang(root.lang === 'en' ? 'ru' : 'en'); });
+
+  /* copy the install command */
+  var copy = document.getElementById('copy');
+  copy.addEventListener('click', function () {
+    if (navigator.clipboard) navigator.clipboard.writeText(document.getElementById('cmd').textContent).catch(function () {});
+    var old = copy.innerHTML;
+    copy.textContent = root.lang === 'ru' ? 'Готово' : 'Copied';
+    setTimeout(function () { copy.innerHTML = old; }, 1500);
+  });
+})();
+</script>
+</body>
+</html>

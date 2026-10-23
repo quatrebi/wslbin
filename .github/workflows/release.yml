@@ -1,48 +1,85 @@
-# A tag v<version> makes a release:
-#   wslbin.exe                     built here from the source of the tag
-#   wslbin-<tag>-source.zip        the source of the tag (what install.ps1 downloads and builds)
-#   install.ps1                    the installer
-#   SHA256SUMS.txt                 their hashes
-# and an attestation (a signed statement that the files were built from this repository by this
-# workflow). install.ps1 does not download wslbin.exe: it builds the source, so that the code can
-# be read first. The .exe is for people who prefer to take it ready and check the attestation.
+# A release is made by a button: Actions > Release > Run workflow, on main. Nothing is tagged by hand;
+# this workflow makes the tag v<version> on the commit that it tested.
 #
-# Two jobs: the tests run with read rights only (they install Pester from the PowerShell Gallery when
-# the runner lacks it, and run a lot of code), and only then the release job, which has the rights to
-# publish and to sign, builds and publishes. The name of the tag reaches the scripts through the
-# environment, never pasted into their text, and must look like a version.
+# The version is the one of the commit (get-version.ps1 -Kind release): MAJOR.MINOR from wslbin.csproj, PATCH
+# counted from git. Four jobs, each with the least rights it needs:
+#   test     reads: tests the commit, builds the program, checks that it reports the version
+#   release  writes the release and signs: builds again, makes the zip, its SHA256 and the attestation,
+#            and publishes them on the commit that was tested
+#   pages    deploys the site (pages.yml, called): the list of releases, releases.json, is made from them
+#   probe    reads the site and checks that it names the version that was released
 #
-# Not run yet: the repository has not been pushed to GitHub. The actions are pinned to the commit of
-# a release tag (checked with "git ls-remote --tags" on 2026-10-21; the comment names the tag).
-# To move to a newer version, look up its commit the same way.
-# Before tagging: set the version attributes at the top of src/wslbin.cs to the number of the tag;
-# this workflow refuses a tag that does not match.
+# What is in the zip for now: wslbin.exe and LICENSE. The scripts of the installer and manifest.json join
+# it with the installer. What anyone can choose never reaches a shell by being pasted into it (env: only);
+# tests/workflows.Tests.ps1 checks that. The actions are pinned to the commit of a release tag (the comment
+# names it); look up a new one with:  git ls-remote --tags https://github.com/<owner>/<action> refs/tags/<tag>
+# Not run on GitHub yet: the repository has not been pushed. One-time setup: Settings > Pages > Source:
+# "GitHub Actions".
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  TAG: ${{ github.ref_name }}
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   test:
     runs-on: windows-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
+      - name: Releases are made from main only
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') {
+              throw "Releases are made from main only, and this run is on $env:GITHUB_REF."
+          }
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
 
-      - name: Build
-        shell: pwsh
-        run: ./build.ps1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
 
-      - name: The tag must be the version of the program
+      - name: Version of this release
+        id: version
         shell: pwsh
+        run: |
+          $version = ./get-version.ps1 -Kind release
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "version $version"
+
+      - name: Not released yet
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git rev-parse -q --verify "refs/tags/v$env:VERSION" *> $null
+          if ($LASTEXITCODE -eq 0) {
+              throw "v$env:VERSION is already released: it is the version of this commit. Raise MAJOR.MINOR in a pull request, or push another commit, and run this again."
+          }
+          exit 0   # (git said "no such tag" with exit code 1, which is what is wanted here)
+
+      - name: Build (Native AOT)
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./build.ps1 -Version $env:VERSION
+
+      - name: The program says the version that was asked for
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: ./.github/check-version.ps1
 
       - name: Pester 5 or later
@@ -65,35 +102,55 @@ jobs:
   release:
     needs: test
     runs-on: windows-latest
+    timeout-minutes: 60
     permissions:
       contents: write
       id-token: write
       attestations: write
       artifact-metadata: write
+    env:
+      VERSION: ${{ needs.test.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Build
-        shell: pwsh
-        run: ./build.ps1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
 
-      - name: The tag must be the version of the program
+      - name: The commit is the one that was tested
         shell: pwsh
+        run: |
+          $now = ./get-version.ps1 -Kind release
+          if ($now -ne $env:VERSION) {
+              throw "The commit has moved: the tests were of $env:VERSION, this commit is $now. Run the release again."
+          }
+
+      - name: Build (Native AOT)
+        shell: pwsh
+        run: ./build.ps1 -Version $env:VERSION
+
+      - name: The program says the version that was asked for
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ needs.test.outputs.version }}
         run: ./.github/check-version.ps1
 
-      - name: Collect the files of the release
+      - name: The files of the release
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist | Out-Null
-          Copy-Item bin/wslbin.exe dist/
-          Copy-Item install.ps1 dist/
-          git archive --format=zip --prefix="wslbin-$env:TAG/" -o "dist/wslbin-$env:TAG-source.zip" HEAD
-          # "<hash>  <name>", the format that install.ps1 reads
-          Get-ChildItem dist -File | Where-Object Name -ne 'SHA256SUMS.txt' | ForEach-Object {
-            '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
-          } | Set-Content -Encoding ascii dist/SHA256SUMS.txt
+          $zip = "wslbin-$env:VERSION-win-x64.zip"
+          $sha = "wslbin-$env:VERSION-win-x64.zip.sha256"
+          Compress-Archive -Path bin/wslbin.exe, LICENSE -DestinationPath "dist/$zip"
+          $hash = (Get-FileHash "dist/$zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          # "<hash>  <name>": the format of sha256sum, ASCII, line feeds
+          $line = "$hash  $zip`n"
+          [IO.File]::WriteAllText("dist/$sha", $line, [Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText('dist/SHA256SUMS.txt', $line, [Text.UTF8Encoding]::new($false))
+          Get-ChildItem dist | Format-Table Name, Length
           Get-Content dist/SHA256SUMS.txt
 
       - name: Attest where the files come from
@@ -101,8 +158,40 @@ jobs:
         with:
           subject-path: 'dist/*'
 
-      - name: Publish
+      - name: Publish the release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create $env:TAG (Get-ChildItem dist -File).FullName --title "wslbin $env:TAG" --generate-notes
+        run: |
+          $files = (Get-ChildItem dist -File).FullName
+          gh release create "v$env:VERSION" $files --target $env:GITHUB_SHA --title "wslbin $env:VERSION" --generate-notes
+
+  pages:
+    needs: release
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+
+  probe:
+    needs: [test, pages]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PAGE_URL: ${{ needs.pages.outputs.page_url }}
+      VERSION: ${{ needs.test.outputs.version }}
+    steps:
+      - name: The site names the version that was released
+        shell: pwsh
+        run: |
+          # (a query that changes with every run: the CDN of Pages may keep the old file for minutes)
+          $url = $env:PAGE_URL.TrimEnd('/') + '/releases.json?run=' + $env:GITHUB_RUN_ID
+          $latest = $null
+          for ($try = 1; $try -le 10; $try++) {
+              try { $latest = (Invoke-RestMethod -Uri $url -Headers @{ 'Cache-Control' = 'no-cache' }).latest }
+              catch { Write-Host "try ${try}: $($_.Exception.Message)" }
+              if ($latest -eq $env:VERSION) { Write-Host "$url says $latest"; exit 0 }
+              Start-Sleep -Seconds 15
+          }
+          throw "$url says '$latest', not $env:VERSION."
