@@ -173,6 +173,33 @@ Describe 'a wsl.exe that does not answer, or a wrapper that is stopped' {
         Get-Process -Id $fake -ErrorAction SilentlyContinue | Should -BeNullOrEmpty -Because 'the stand-in for wsl.exe is stopped'
     }
 
+    It '--doctor gives up on a wsl.exe that does not answer, and says what to try' {
+        $wsl = New-FakeWsl -Files @{ 'list.sleep' = '60000' }
+        $wsl.WSLBIN_TEST_QUERY_TIMEOUT_MS = '2000'
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--doctor')
+        $watch.Elapsed.TotalSeconds | Should -BeLessThan 30
+        $r.ExitCode | Should -Be 125
+        $r.Out | Should -Match '\[FAIL\] wsl\.exe did not answer within 2 seconds'
+        $r.Out | Should -Match 'fix: wsl --shutdown'
+    }
+
+    It '--link gives up on a wsl.exe that has ended but whose output a left-behind process holds open' {
+        $wsl = New-FakeWsl -Files @{ 'run.out' = "ok jq`n"; 'run.hold' = '61' }
+        $wsl.WSLBIN_TEST_QUERY_TIMEOUT_MS = '3000'
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            $r = Invoke-Fake -Wsl $wsl -Arguments @('--link', '--dry-run', 'jq')
+            $watch.Elapsed.TotalSeconds | Should -BeLessThan 30
+            $r.ExitCode | Should -Be 125
+            $r.Err | Should -Match 'did not answer within 3 seconds'
+        }
+        finally {
+            $holdPid = Join-Path $wsl.FAKE_WSL_DIR 'hold.pid'
+            if (Test-Path $holdPid) { Stop-Process -Id ([int](Get-Content $holdPid)) -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
     It 'stops wsl.exe when the wrapper is stopped (by a timeout of its caller, say)' {
         $wsl = New-FakeWsl -Files @{ 'run.sleep' = '60000' }
         $dir = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
@@ -241,6 +268,49 @@ Describe 'a folder of another distribution' -Tag 'WSL' -Skip:$NoWsl {
         $r = Invoke-Fake -Wsl $wsl -Name 'rm' -Arguments @('*.log') -WorkingDirectory $script:InDefault
         $r.ExitCode | Should -Be 0 -Because $r.Err
         @(Get-Calls $wsl).Count | Should -Be 1
+    }
+}
+
+Describe 'a path of another distribution as an argument' {
+    It 'is passed unchanged, with a warning, when it is not in the default distribution' {
+        $wsl = New-FakeWsl
+        $wsl.WSLBIN_TEST_DEFAULT_DISTRO = 'Ubuntu-wslbin-test'
+        $r = Invoke-Fake -Wsl $wsl -Name 'cat' -Arguments @('--wslbin-explain', '\\wsl.localhost\Debian-wslbin-test\etc\os-release')
+        $r.ExitCode | Should -Be 0
+        $r.Out | Should -Not -Match '/etc/os-release'
+        $r.Err | Should -Match "is in distribution 'Debian-wslbin-test', but wslbin runs in 'Ubuntu-wslbin-test'; passed unchanged"
+    }
+
+    It 'is translated when it is in the default distribution' {
+        $wsl = New-FakeWsl
+        $wsl.WSLBIN_TEST_DEFAULT_DISTRO = 'Ubuntu-wslbin-test'
+        $r = Invoke-Fake -Wsl $wsl -Name 'cat' -Arguments @('--wslbin-explain', '\\wsl.localhost\ubuntu-wslbin-test\etc\os-release')
+        $r.Out | Should -BeExactly "cat /etc/os-release`n"
+        $r.Err | Should -BeNullOrEmpty
+    }
+}
+
+Describe '--doctor and other copies of wslbin' {
+    It 'names a wslbin that comes first in PATH, so that "wslbin" starts that one' {
+        $wsl = New-FakeWsl -Files @{ 'list.out' = $script:Usage; 'list.exit' = '1' }
+        $h = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
+        $other = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $h, $other | Out-Null
+        Copy-Item $global:WslbinTest.FakeExe (Join-Path $other 'wslbin.exe')
+        $wsl.PATH = "$other;$h;$env:SystemRoot\System32"
+        $r = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Env $wsl -Arguments @('--doctor')
+        $r.Out | Should -Match ('\[warn\] another wslbin comes first in PATH: ' + [regex]::Escape((Join-Path $other 'wslbin.exe')))
+    }
+
+    It 'names one that comes later in PATH too' {
+        $wsl = New-FakeWsl -Files @{ 'list.out' = $script:Usage; 'list.exit' = '1' }
+        $h = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
+        $other = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $h, $other | Out-Null
+        Copy-Item $global:WslbinTest.FakeExe (Join-Path $other 'wslbin.exe')
+        $wsl.PATH = "$h;$other;$env:SystemRoot\System32"
+        $r = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Env $wsl -Arguments @('--doctor')
+        $r.Out | Should -Match ('\[warn\] another wslbin is in PATH: ' + [regex]::Escape((Join-Path $other 'wslbin.exe')))
     }
 }
 
