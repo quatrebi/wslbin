@@ -15,6 +15,14 @@ function Remove-WslbinTest {
     if ($global:WslbinTest) { Remove-Item -Recurse -Force $global:WslbinTest.Work -ErrorAction SilentlyContinue }
 }
 
+# A fresh folder holding a copy of wslbin.exe, for tests of --link and friends.
+function New-WslbinHome {
+    $dir = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    Copy-Item $global:WslbinTest.Exe (Join-Path $dir 'wslbin.exe')
+    $dir
+}
+
 # Runs a copy of wslbin.exe named "$Name.exe" (the utility), with its own wslbin.ini if $Ini is given.
 # Without -Dir every call gets a folder of its own; with -Dir the folder is reused (and the copy is
 # made only when it is missing). Returns stdout, stderr (both UTF-8), the exit code and the folder.
@@ -52,6 +60,8 @@ function Invoke-Wslbin {
     $psi.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
     if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
     $null = $psi.Environment.Remove('WSLENV')
+    # a test must never put the question for administrator rights on the screen
+    $psi.Environment['WSLBIN_NO_ELEVATION'] = '1'
     foreach ($key in $Env.Keys) {
         if ($null -eq $Env[$key]) { $null = $psi.Environment.Remove($key) } else { $psi.Environment[$key] = $Env[$key] }
     }
@@ -200,4 +210,11 @@ function Invoke-GitBash {
     $out = $p.StandardOutput.ReadToEnd()
     $p.WaitForExit()
     [pscustomobject]@{ Out = $out; Err = $errTask.GetAwaiter().GetResult(); ExitCode = $p.ExitCode }
+}
+
+# PATH for a child: the given folder first, then System32 only. Keeps tests of name conflicts
+# independent of what is installed on the machine.
+function Get-IsolatedPath {
+    param([string]$First)
+    "$First;$env:SystemRoot\System32"
 }

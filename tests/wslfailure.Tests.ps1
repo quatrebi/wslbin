@@ -61,6 +61,20 @@ AfterAll {
 
 Describe 'WSL is not installed: wsl.exe answers with its usage text' {
 
+    It '--link says so in one line' {
+        $wsl = New-FakeWsl -Files @{ 'run.out' = $script:Usage; 'run.exit' = '1' }
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--link', 'jq')
+        $r.ExitCode | Should -Be 125
+        $lines = @($r.Err.TrimEnd("`n") -split "`n")
+        $lines.Count | Should -Be 1 -Because $r.Err
+        $lines[0] | Should -BeExactly "wslbin: cannot run bash in WSL: WSL is not installed (wsl.exe answers with its usage text) (fix: run 'wsl --install' as administrator)"
+    }
+
+    It 'finds the usage text on standard output when standard error holds only a line break' {
+        $wsl = New-FakeWsl -Files @{ 'run.out' = $script:Usage; 'run.err' = [byte[]](0, 13, 10); 'run.exit' = '1' }
+        (Invoke-Fake -Wsl $wsl -Arguments @('--link', 'jq')).Err | Should -Match 'WSL is not installed'
+    }
+
     It 'a wrapper exits with 125 and says why, instead of passing on the exit code of wsl.exe' {
         $wsl = New-FakeWsl -Files @{ 'run.out' = $script:Usage; 'run.exit' = '1' } -HasDistribution $false
         $r = Invoke-Fake -Wsl $wsl -Name 'grep' -Arguments @('x', 'file')
@@ -73,6 +87,44 @@ Describe 'WSL is not installed: wsl.exe answers with its usage text' {
         $r = Invoke-Fake -Wsl $wsl -Name 'grep' -Arguments @('x', 'file')
         $r.ExitCode | Should -Be 1
         $r.Err | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'messages of wsl.exe' {
+
+    It 'shows a message in another language as it is (wsl.exe writes UTF-16)' {
+        # "Нет дистрибутива с указанным именем." and "Код ошибки"
+        $text = (-join [char[]](0x41D, 0x435, 0x442, 0x20, 0x434, 0x438, 0x441, 0x442, 0x440, 0x438, 0x431, 0x443, 0x442, 0x438, 0x432, 0x430)) + '.'
+        $code = (-join [char[]](0x41A, 0x43E, 0x434, 0x20, 0x43E, 0x448, 0x438, 0x431, 0x43A, 0x438)) + ': Wsl/Service/WSL_E_DISTRO_NOT_FOUND'
+        $wsl = New-FakeWsl -Files @{ 'run.out' = (ConvertTo-Utf16 "$text`r`n$code`r`n"); 'run.exit' = '-1' }
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--link', 'jq')
+        $r.ExitCode | Should -Be 125
+        [string]::Equals($r.Err.TrimEnd("`n"), "wslbin: cannot run bash in WSL: $text $code", [StringComparison]::Ordinal) | Should -BeTrue -Because $r.Err
+    }
+
+    It 'reads what bash writes after a message of wsl.exe in UTF-16 on the same stream' {
+        $out = [byte[]]((ConvertTo-Utf16 "wsl: a warning of wsl.exe`r`n") + [Text.Encoding]::UTF8.GetBytes("ok jq`n"))
+        $wsl = New-FakeWsl -Files @{ 'run.out' = $out }
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--link', '--dry-run', 'jq')
+        $r.ExitCode | Should -Be 0 -Because $r.Err
+        $r.Out | Should -Match 'would create .*jq\.exe'
+    }
+
+    It '--list does not call a wrapper "ok" when WSL could not be asked' {
+        $wsl = New-FakeWsl -Files @{ 'run.out' = (ConvertTo-Utf16 "There is no distribution with the supplied name.`r`n"); 'run.exit' = '-1' }
+        $h = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $h | Out-Null
+        $null = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Arguments @('--internal-link', 'grep')
+        $r = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Env $wsl -Arguments @('--list')
+        $r.Out | Should -Match '^grep\s+not checked in WSL'
+        $r.Out | Should -Not -Match '\bok\b'
+        $r.Err | Should -Match 'could not ask WSL'
+    }
+
+    It 'keeps all of a long message, with the error code at its end' {
+        $text = ('Windows Subsystem for Linux has no installed distributions. ' * 5) + 'Error code: Wsl/Service/CreateInstance/GetDefaultDistro/WSL_E_DEFAULT_DISTRO_NOT_FOUND'
+        $wsl = New-FakeWsl -Files @{ 'run.out' = (ConvertTo-Utf16 "$text`r`n"); 'run.exit' = '-1' }
+        (Invoke-Fake -Wsl $wsl -Arguments @('--link', 'jq')).Err | Should -Match 'GetDefaultDistro/WSL_E_DEFAULT_DISTRO_NOT_FOUND'
     }
 }
 

@@ -87,12 +87,12 @@ namespace Wslbin
             catch (UnauthorizedAccessException) { return null; }
         }
 
-        // Runs a child that shares the console and returns its exit code.
+        // Runs a child that shares the console (a wrapper's utility, apt) and returns its exit code.
         public static int RunInConsole(ProcessStartInfo psi)
         {
             // Ctrl+C reaches every process on the console, wsl.exe and the Linux side included. While the
             // child runs, this process must survive it to hand back the child's exit code; afterwards
-            // Ctrl+C stops wslbin again.
+            // (the next question of --link, say) Ctrl+C stops wslbin again.
             ConsoleCancelEventHandler survive = delegate(object sender, ConsoleCancelEventArgs e) { e.Cancel = true; };
             Console.CancelKeyPress += survive;
             try

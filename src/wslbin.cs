@@ -13,6 +13,9 @@
 //   Launcher.cs         Launcher: wsl.exe command line, starting a child in the console, exit codes;
 //                       ChildJob: ending wsl.exe when wslbin ends
 //   WslQuery.cs         WslQuery: what wslbin learns about WSL (wsl.exe calls whose output it reads, the registry)
+//   Wrappers.cs         Wrappers (copies of wslbin.exe named after utilities), SearchPath (the PATH of
+//                       Windows), Conflicts (names that Windows already uses), Elevation (administrator rights)
+//   WrapperCommands.cs  WrapperCommands: --link, --unlink, --list; Apt: installing a utility that WSL lacks
 //   Out.cs              Out: console output that does not depend on the console code page
 
 using System;
@@ -93,9 +96,16 @@ namespace Wslbin
         // wslbin's own commands. Everything else that starts with "-" is an error; a word is a utility.
         static List<Command> Commands(string exePath)
         {
+            Func<Config> config = () => Config.Load(Config.PathFor(exePath), Out.Warn);
             return new List<Command>
             {
-                new Command { Name = "--version", Run = PrintVersion }
+                new Command { Name = "--version", Run = PrintVersion },
+                new Command { Name = "--link", Run = a => WrapperCommands.Link(a, exePath, config()) },
+                new Command { Name = "--unlink", Run = a => WrapperCommands.Unlink(a, exePath) },
+                new Command { Name = "--list", Run = a => WrapperCommands.List(a, exePath, config()) },
+                // the elevated halves of --link and --unlink; not for people
+                new Command { Name = "--internal-link", Run = a => WrapperCommands.InternalLink(a, exePath) },
+                new Command { Name = "--internal-unlink", Run = a => WrapperCommands.InternalUnlink(a, exePath) }
             };
         }
 
