@@ -140,6 +140,51 @@ Describe 'the texts in docs/' {
         $llms | Should -Match ([regex]::Escape((Read-Doc 'en' 'ai-context.md').TrimEnd("`n")))
     }
 }
+
+Describe 'the READMEs' {
+    BeforeAll {
+        $script:InstallParameters = @((Get-Command (Join-Path $script:Repo 'install.ps1')).Parameters.Keys)
+        function Read-Readme([string]$name) { [IO.File]::ReadAllText((Join-Path $script:Repo $name), [Text.UTF8Encoding]::new($false)).Replace("`r`n", "`n") }
+        function Get-WslbinOptions([string]$text) {
+            [regex]::Matches($text, 'wslbin (--[a-z][a-z-]*)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+        }
+        function Get-InstallParameters([string]$text) {
+            # the parameters written after install.ps1 on a line; "Get-Help .\install.ps1 -Full" is Get-Help's
+            $names = foreach ($m in [regex]::Matches($text, '(?m)^(?<line>[^\n]*install\.ps1[^\n`]*)')) {
+                if ($m.Groups['line'].Value -match 'Get-Help') { continue }
+                $after = $m.Groups['line'].Value.Substring($m.Groups['line'].Value.IndexOf('install.ps1'))
+                [regex]::Matches($after, '(?<![\w-])-([A-Z][A-Za-z0-9]+)') | ForEach-Object { $_.Groups[1].Value }
+            }
+            $names | Sort-Object -Unique
+        }
+    }
+
+    It 'link to each other' {
+        (Read-Readme 'README.md') | Should -Match '\(README\.ru\.md\)'
+        (Read-Readme 'README.ru.md') | Should -Match '\(README\.md\)'
+    }
+
+    It '<File> mentions only wslbin options that exist' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }) {
+        Get-WslbinOptions (Read-Readme $File) | Where-Object { $_ -notin $script:KnownOptions } | Should -BeNullOrEmpty
+    }
+
+    It '<File> uses only install.ps1 parameters that exist' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }) {
+        $used = Get-InstallParameters (Read-Readme $File)
+        @($used).Count | Should -BeGreaterThan 3
+        $used | Where-Object { $_ -notin $script:InstallParameters } | Should -BeNullOrEmpty
+    }
+
+    It 'name the same options and the same install parameters in both languages' {
+        $en = Read-Readme 'README.md'; $ru = Read-Readme 'README.ru.md'
+        Get-WslbinOptions $ru | Should -Be (Get-WslbinOptions $en)
+        Get-InstallParameters $ru | Should -Be (Get-InstallParameters $en)
+    }
+
+    It 'describe the same sections in both languages' {
+        $headings = { param($t) @([regex]::Matches($t, '(?m)^## ').Count) }
+        (& $headings (Read-Readme 'README.ru.md')) | Should -Be (& $headings (Read-Readme 'README.md'))
+    }
+}
 Describe 'wslbin --ai-context' {
     It 'prints the text for agents in <Lang>' -ForEach @(@{ Lang = 'en' }, @{ Lang = 'ru' }) {
         $r = Invoke-Help -Arguments @('--ai-context') -Lang $Lang
