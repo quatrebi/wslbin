@@ -1,0 +1,36 @@
+Paths: Windows to Linux
+
+These are turned into Linux paths (smart and sh modes; raw leaves everything alone):
+  C:\x\y  and  C:/x/y           ->  /mnt/c/x/y        (the drive letter becomes lower case)
+  C:\backup\                    ->  /mnt/c/backup/    (a slash at the end stays: rsync cares)
+  \\?\C:\x                      ->  /mnt/c/x
+  --file=D:\a    OUT=C:\out     ->  the part after the first = is translated
+  -IC:\inc                      ->  -I/mnt/c/inc      (a one-letter option glued to a path)
+  \\wsl.localhost\<distro>\x    ->  /x                (also \\wsl$\<distro>\x)
+  C:\proj\*.log                 ->  /mnt/c/proj/*.log (and bash expands the *)
+  .\file, ..\x, src\a.c         ->  ./file, ../x, src/a.c   but only when that file or folder exists
+                                in the current folder (what Tab completion of PowerShell and cmd
+                                writes). Also after = and after a one-letter option, as above.
+
+These are left as they are:
+  .\d+, .\new.txt, .\*.txt      a relative path that does not exist: a regular expression stays a
+                                regular expression, and a file that is about to be created keeps the
+                                name you typed. Write ./new.txt (forward slashes) for such a name.
+                                The check is made by wslbin on Windows, in the folder the command
+                                runs in, and WSL is not asked.
+  \\server\share\x             a network path has no Linux counterpart: warning on standard error.
+  C:x                           a path relative to a drive: warning. (Not shown for text like
+                                sed s:a:b:, which has a second colon.)
+  \\wsl.localhost\<other>\x     a path in another distribution than the one wslbin runs in, when
+                                distro is set in wslbin.ini: warning.
+  host:/srv/*, https://x/y      anything that does not start with a drive letter and a slash.
+
+What to know
+  - Windows drives are mounted at /mnt/<letter>. A different automount root in wsl.conf is not
+    taken into account.
+  - Whether a drive letter exists is not checked, so a host named a in a:/srv is taken for drive A:.
+    Use another name, or --wslbin-raw.
+  - Paths inside a -c string are not translated: wslbin -c "cat C:\x" gives bash C:\x.
+  - Values of environment variables that you pass to Linux are translated too
+    (wslbin --help env).
+  - See what will be passed: <utility> --wslbin-explain <arguments>.

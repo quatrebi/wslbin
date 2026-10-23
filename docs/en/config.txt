@@ -1,0 +1,40 @@
+wslbin.ini
+
+The file lies next to wslbin.exe (and the wrappers: they are copies). Plain text, one setting per
+line: key = value. A line that begins with # or ; is a comment (no comments at the end of a line).
+UTF-8. A wrong line or an unknown key is a warning with the line number; the rest is used.
+Keys and utility names do not depend on case. Repeating a list key (raw, sh, pass_env, path) adds
+to it; for the other keys the last one counts.
+
+  distro = Ubuntu-24.04
+      The distribution to run in. Default: the default distribution of WSL. wslbin --doctor lists
+      the installed ones.
+
+  lang = ru
+      Language of help and of wslbin --ai-context: en or ru. Default: the language of Windows.
+
+  raw = grep, sed
+      Utilities that always get their arguments untouched (like --wslbin-raw). Commas or blanks.
+
+  sh = make
+      Utilities that always get Linux variables and $(...) (like --wslbin-sh). raw wins when a name
+      is in both. An option on the command line wins over both.
+
+  pass_env = KENV_*, APP_*, CI
+      Windows variables that Linux programs see (wslbin --help env).
+
+  path = ~/.local/bin, ~/.cargo/bin
+      Linux directories put in front of PATH (commas only, so a name may have blanks; ~ is the
+      Linux home). A directory name with a colon is ignored.
+
+  args.ls = --color=auto
+      Arguments put in front of the ones you type. Blanks separate them; single or double quotes
+      group a word: args.tool = "a b" c. They get the same treatment as the ones you type.
+
+Example
+  distro = Ubuntu-24.04
+  raw = grep, sed
+  sh = make
+  pass_env = APP_*, CI
+  path = ~/.local/bin
+  args.ls = --color=auto

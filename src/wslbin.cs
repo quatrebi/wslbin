@@ -18,7 +18,8 @@
 //   WrapperCommands.cs  WrapperCommands: --link, --unlink, --list; Apt: installing a utility that WSL lacks
 //   NativeVersions.cs   NativeVersions: utilities that have a Windows version of their own (data/native-versions.txt)
 //   Doctor.cs           Doctor: --doctor
-//   Help.cs             Resources: texts built into the .exe (build.ps1)
+//   Help.cs             Help: --help [topic]; Resources: texts built into the .exe (build.ps1)
+//   AiContext.cs        AiContext: --ai-context, --install-ai-context
 //   Completion.cs       Completion: --complete, Tab completion for the shells
 //   Init.cs             Init: --init pwsh | clink
 //   Out.cs              Out: console output that does not depend on the console code page
@@ -108,12 +109,17 @@ namespace Wslbin
             Func<Config> config = () => Config.Load(Config.PathFor(exePath), Out.Warn);
             return new List<Command>
             {
+                new Command { Name = "--help", Run = a => Help.Run(a, config()) },
+                new Command { Name = "-h", Hidden = true, Run = a => Help.Run(a, config()) },
+                new Command { Name = "-?", Hidden = true, Run = a => Help.Run(a, config()) },
                 new Command { Name = "--version", Run = PrintVersion },
                 new Command { Name = "--link", Run = a => WrapperCommands.Link(a, exePath, config()) },
                 new Command { Name = "--unlink", Run = a => WrapperCommands.Unlink(a, exePath) },
                 new Command { Name = "--list", Run = a => WrapperCommands.List(a, exePath, config()) },
                 new Command { Name = "--doctor", Run = a => Doctor.Run(a, exePath) },
                 new Command { Name = "--init", Run = a => Init.Run(a, exePath) },
+                new Command { Name = "--ai-context", Run = a => AiContext.Print(a, config()) },
+                new Command { Name = "--install-ai-context", Run = a => AiContext.Install(a, config()) },
                 new Command { Name = "--complete", Hidden = true, Run = a => Completion.Run(a, exePath) },
                 // the elevated halves of --link and --unlink; not for people
                 new Command { Name = "--internal-link", Hidden = true, Run = a => WrapperCommands.InternalLink(a, exePath) },
@@ -139,12 +145,6 @@ namespace Wslbin
             Out.Info("wslbin " + Version);
             return 0;
         }
-
-        const string Usage =
-            "Usage: <utility>.exe [--wslbin-raw | --wslbin-sh] [--wslbin-explain] [arguments]\n" +
-            "       wslbin [--raw | --sh] [--explain] <utility> [arguments]\n" +
-            "       wslbin [--explain] -c \"<bash string>\" [arguments]\n" +
-            "       wslbin --version";
 
         internal static int Main(string[] args)
         {
@@ -175,7 +175,7 @@ namespace Wslbin
             {
                 if (args.Length == 0)
                 {
-                    Out.Error(Usage);
+                    Out.Error(Help.Overview(Config.Load(Config.PathFor(exePath), Out.Warn)).TrimEnd('\n'));
                     return ExitCodes.Failed;
                 }
                 foreach (Command command in Commands(exePath))
@@ -244,7 +244,7 @@ namespace Wslbin
                 else break;
             }
             if (i == args.Length)
-                throw new WslbinException("no utility given (wslbin without arguments shows the usage)");
+                throw new WslbinException("no utility given (see wslbin --help)");
 
             if (args[i] == ScriptOption)
             {
@@ -257,7 +257,7 @@ namespace Wslbin
                 return inv;
             }
             if (args[i].StartsWith("-", StringComparison.Ordinal))
-                throw new WslbinException("unknown option " + args[i] + " (wslbin without arguments shows the usage)");
+                throw new WslbinException("unknown option " + args[i] + " (see wslbin --help)");
 
             inv.Utility = args[i];
             for (i++; i < args.Length; i++) inv.Args.Add(args[i]);

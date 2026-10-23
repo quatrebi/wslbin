@@ -109,6 +109,8 @@ namespace Wslbin
                                       : StartingWith(new[] { "--native-fallback", "--dir" }, cur);
                 case "--list":
                     return StartingWith(new[] { "--names" }, cur);
+                case "--help":
+                    return cword == 2 ? StartingWith(Help.Topics, cur) : new List<string>();
                 case "--unlink":
                     {
                         var names = StartingWith(new[] { "--all" }, cur);

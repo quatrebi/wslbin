@@ -104,6 +104,7 @@ Describe 'wslbin --complete: wslbin itself (no WSL)' {
         @{ Typed = '--li'; Want = @('--link', '--list') }
         @{ Typed = '--un'; Want = @('--unlink') }
         @{ Typed = '--ex'; Want = @('--explain') }
+        @{ Typed = '--h'; Want = @('--help') }
         @{ Typed = '--ini'; Want = @('--init') }
         @{ Typed = '-c'; Want = @('-c') }
     ) {
@@ -125,6 +126,11 @@ Describe 'wslbin --complete: wslbin itself (no WSL)' {
     It 'offers the wrappers, and --all, after --unlink' {
         Get-Candidates -Dir $script:H -Cword 2 -Words @('wslbin', '--unlink', '') | Should -Be @('--all', 'ls', 'make', 'man', 'rsync')
         Get-Candidates -Dir $script:H -Cword 2 -Words @('wslbin', '--unlink', 'ma') | Should -Be @('make', 'man')
+    }
+
+    It 'offers the help topics' {
+        Get-Candidates -Dir $script:H -Cword 2 -Words @('wslbin', '--help', 'mo') | Should -Be @('modes')
+        (Get-Candidates -Dir $script:H -Cword 2 -Words @('wslbin', '--help', '')).Count | Should -BeGreaterThan 5
     }
 
     It 'offers the options of --link and --list' {

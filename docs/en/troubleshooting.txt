@@ -1,0 +1,57 @@
+When something does not work
+
+1. See what runs:   <utility> --wslbin-explain <arguments>
+   prints the bash command (and warnings), runs nothing. If the command is not what you meant, the
+   cause is the mode (wslbin --help modes), a path (wslbin --help paths) or quotes that the shell
+   already removed.
+2. Check the setup:   wslbin --doctor
+   WSL, the distribution, bash, bash-completion, the folder in PATH, wslbin.ini, every wrapper.
+   Each problem comes with a "fix:" line. An [info] line is advice, not a problem: the utility of
+   that wrapper has a Windows version of its own (starts faster, needs no WSL), and the line names
+   the winget package.
+
+Exit codes
+  0..255  the utility's own code (one that a signal ended gives the number of the signal:
+          2 after Ctrl+C, 15 for kill).
+  125     wslbin itself failed (a wrong option, no WSL, a bad distro in wslbin.ini, a folder that
+          has no Linux path), or wsl.exe did (no such distribution: its message is printed above).
+  126     bash found the program but cannot run it.   127   bash did not find it.
+
+Common causes
+  command not found (127)
+      The utility is not installed in WSL: wslbin --link <utility> offers to install the apt package.
+      Tools in ~/.local/bin or ~/.cargo/bin: bash starts without your profile, add
+      path = ~/.local/bin to wslbin.ini (wslbin --doctor says when this is the cause).
+  a utility prints a page of help for wsl.exe (--install, --list, --status in it)
+      WSL is not installed: without it, wsl.exe answers every command with its own help, in the
+      language of Windows. wslbin adds a line that says so and exits with 125, and wslbin --doctor
+      says "WSL is not installed". The fix: wsl --install, as administrator.
+  "the current folder ... has no Linux path"
+      The current folder is a network path (\\server\share) or a folder of another distribution.
+      wsl.exe would run the utility in your Linux home folder instead, where "rm *.log" would find
+      other files, so wslbin refuses (125). Change to a folder on a drive first.
+  ls, cat, man, curl run the PowerShell command, not the wrapper
+      PowerShell looks at its aliases and functions first. wslbin --init pwsh | Invoke-Expression in
+      the profile removes them for the wrappers you made; or call ls.exe.
+  --link refuses a name
+      Windows already has that program (find, sort, tar, curl, ssh ...) or cmd has a built-in
+      command of that name (echo, type, dir ...). A wrapper with that name would never be reached
+      or would break scripts. The message names what is in the way.
+  --link says it needs administrator rights
+      The folder is under C:\Program Files. wslbin asks Windows (UAC) and does the writing in a
+      copy of itself with rights. Declined: nothing changes. Or install for one user.
+      WSLBIN_NO_ELEVATION=1 makes it fail at once instead of asking (for scripts).
+  a wildcard was expanded when it should not be, or not when it should
+      wslbin --help globs. Quotes are removed by PowerShell before wslbin; use --wslbin-raw.
+  a path with a backslash was not translated
+      Absolute Windows paths (C:\x) are. A relative one (.\x, src\a.c) is only when the file or
+      folder exists in the current folder; otherwise use forward slashes (./new.txt).
+  Windows PowerShell 5.1 loses the closing quote of "C:\my dir\"
+      That is PowerShell 5.1, which does not escape a backslash before a quote. Do not end the path
+      with a backslash, use a slash, or use PowerShell 7.
+  start is slow
+      The first call after a pause may have to start the WSL virtual machine. After that a call
+      costs a few dozen milliseconds more than wsl.exe itself.
+  Ctrl+C
+      wslbin lets the utility handle it and returns its exit code. When wslbin itself is stopped
+      (the timeout of a script, the stop button of an IDE), wsl.exe and the utility stop with it.

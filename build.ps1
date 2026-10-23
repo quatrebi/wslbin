@@ -30,6 +30,13 @@ foreach ($r in $resources) {
     if (-not (Test-Path $file)) { throw "missing $file" }
     $arguments += "/resource:$file,$($r[1])"
 }
+# docs\<language>\<file> -> wslbin.docs.<language>.<file>: help topics and the text for AI agents.
+# Only .txt and .md files one level down: an editor's backup or a subfolder is not a text of wslbin.
+foreach ($folder in Get-ChildItem -Path (Join-Path $PSScriptRoot 'docs') -Directory) {
+    foreach ($file in Get-ChildItem -Path $folder.FullName -File | Where-Object { $_.Extension -in '.txt', '.md' }) {
+        $arguments += "/resource:$($file.FullName),wslbin.docs.$($folder.Name).$($file.Name)"
+    }
+}
 # the program: every .cs file in src (src\wslbin.cs holds the entry point and the version)
 foreach ($source in Get-ChildItem -Path (Join-Path $PSScriptRoot 'src') -Filter '*.cs' -File | Sort-Object Name) {
     $arguments += $source.FullName

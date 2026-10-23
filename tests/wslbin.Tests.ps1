@@ -435,6 +435,12 @@ Describe 'wslbin.exe itself' {
         $r.ExitCode | Should -Be 0
     }
 
+    It 'prints help' {
+        $r = Invoke-Wslbin -Name 'wslbin' -Arguments @('--help')
+        $r.Out | Should -Match 'Usage'
+        $r.ExitCode | Should -Be 0
+    }
+
     It 'prints usage and fails without arguments' {
         $r = Invoke-Wslbin -Name 'wslbin'
         $r.ExitCode | Should -Be 125

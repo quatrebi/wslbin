@@ -60,8 +60,14 @@ function Invoke-Wslbin {
     $psi.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
     if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
     $null = $psi.Environment.Remove('WSLENV')
+    # wslbin --install-ai-context writes into the instructions of Claude Code and Codex, which it finds
+    # through these two variables (and the home folder). A test run starts from the session of
+    # whoever runs it, where they point at the real ones. Point them at folders that do not exist,
+    # so that a test that forgets to name its own folders skips the agents instead of changing them.
     # a test must never put the question for administrator rights on the screen
     $psi.Environment['WSLBIN_NO_ELEVATION'] = '1'
+    $psi.Environment['CLAUDE_CONFIG_DIR'] = Join-Path $global:WslbinTest.Work 'no-claude-folder-here'
+    $psi.Environment['CODEX_HOME'] = Join-Path $global:WslbinTest.Work 'no-codex-folder-here'
     foreach ($key in $Env.Keys) {
         if ($null -eq $Env[$key]) { $null = $psi.Environment.Remove($key) } else { $psi.Environment[$key] = $Env[$key] }
     }

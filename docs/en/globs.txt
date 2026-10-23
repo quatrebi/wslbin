@@ -1,0 +1,25 @@
+Wildcards
+
+In smart mode bash expands these, in the current folder, by Linux rules:
+  *   any run of characters       *.log
+  ?   one character               file?.txt
+  [abc] [a-z] [!a] [^a] [[:digit:]]   one character from a set
+  ~   at the start of an argument: the Linux home folder   ~/work
+
+The folder is the one you are in; wsl.exe passes it on (C:\proj becomes /mnt/c/proj).
+
+If a pattern matches nothing, it is passed on as it is, so --include=*.txt and server:/path/*
+do not break. A [ without a closing ] is an ordinary character.
+
+Not expanded, always passed literally: braces {a,b}, $VARIABLES, `commands`, $(commands),
+and anything with ; | & < > or quotes. In PowerShell and cmd the ordinary rules of that shell for
+pipes and redirection apply to the whole line, before wslbin starts.
+
+Quotes do not turn a wildcard off:
+  PowerShell and cmd remove the quotes first, so grep 'a*' file arrives as a*, and bash expands it
+  if files that begin with a exist. To pass a pattern untouched, use --wslbin-raw:
+      grep --wslbin-raw 'a*' file.txt
+  or make the utility raw for good: raw = grep, sed   in wslbin.ini.
+
+In an argument that contains $ or ` in --wslbin-sh mode, wildcards are not expanded either.
+In raw mode nothing is expanded. See what bash will get: <utility> --wslbin-explain <arguments>.
