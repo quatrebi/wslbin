@@ -1,0 +1,31 @@
+<Project>
+
+  <!-- Settings shared by every project of the repository. -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <!-- Both are turned on file by file, then here, while the code is modernised. -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <!--
+      latest-recommended gives 44 warnings on the code as it is (CA1861, CA1865, CA1845, CA2249, CA1870,
+      CA1822, CA1305, CA1805, CA1859); the modernisation (a plan of its own) removes them and raises this.
+    -->
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <!--
+      Not set, on purpose: InvariantGlobalization (src/Help.cs picks the language of the help by
+      CultureInfo.CurrentUICulture) and UseSystemResourceKeys (the texts of system exceptions would
+      become keys in the "internal error" message).
+    -->
+  </PropertyGroup>
+
+</Project>

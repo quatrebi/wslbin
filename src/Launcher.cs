@@ -267,7 +267,7 @@ namespace Wslbin
                 if (created == IntPtr.Zero) return;
                 var limits = new ExtendedLimits();
                 limits.Basic.LimitFlags = KillOnJobClose | SilentBreakawayOk;
-                if (!SetInformationJobObject(created, ExtendedLimitInformation, ref limits, Marshal.SizeOf(typeof(ExtendedLimits))))
+                if (!SetInformationJobObject(created, ExtendedLimitInformation, ref limits, Marshal.SizeOf<ExtendedLimits>()))
                 {
                     CloseHandle(created);
                     return;

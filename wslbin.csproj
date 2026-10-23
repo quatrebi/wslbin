@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AssemblyName>wslbin</AssemblyName>
+    <RootNamespace>Wslbin</RootNamespace>
+
+    <!--
+      One self-contained file without a runtime: every wrapper is a copy of this one .exe.
+      Native AOT needs the .NET SDK 10 and the C++ build tools of Visual Studio; build.ps1 does the rest.
+    -->
+    <PublishAot>true</PublishAot>
+    <!-- the runtime packs of ASP.NET Core and Windows Desktop are not used by this program -->
+    <DisableTransitiveFrameworkReferenceDownloads>true</DisableTransitiveFrameworkReferenceDownloads>
+    <IsAotCompatible>true</IsAotCompatible>
+
+    <!-- MAJOR.MINOR: a pull request raises it. PATCH and the rest come from git (get-version.ps1). -->
+    <VersionPrefix>0.1</VersionPrefix>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+
+    <!-- ProductName "wslbin" is how the commands list, link and unlink recognise the wrappers among other .exe files. -->
+    <Product>wslbin</Product>
+    <AssemblyTitle>wslbin</AssemblyTitle>
+    <Description>Run Linux utilities from WSL as ordinary Windows programs</Description>
+    <Company>Dmitriy Khudnitskiy</Company>
+    <Copyright>Copyright (c) 2026 Dmitriy Khudnitskiy</Copyright>
+    <RepositoryUrl>https://github.com/quatrebi/wslbin</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+
+    <!-- Test builds only (build.ps1 -ExtraSource, -Main): a stand-in for wsl.exe, see tests/FakeWslEntry.cs. -->
+    <StartupObject Condition="'$(Main)' != ''">$(Main)</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="src\**\*.cs" />
+    <!-- build.ps1 passes the files with ; written as %3B (a plain ; would end the property on the command line) -->
+    <Compile Include="$([MSBuild]::Unescape($(ExtraSource)))" Condition="'$(ExtraSource)' != ''" />
+  </ItemGroup>
+
+  <!-- The texts that live in files. The names are the constants of the Resources class in src/Help.cs. -->
+  <ItemGroup>
+    <EmbeddedResource Include="wsl\complete.sh" LogicalName="wslbin.wsl.complete.sh" />
+    <EmbeddedResource Include="shell\wslbin.ps1" LogicalName="wslbin.shell.wslbin.ps1" />
+    <EmbeddedResource Include="shell\wslbin.lua" LogicalName="wslbin.shell.wslbin.lua" />
+    <EmbeddedResource Include="data\native-versions.txt" LogicalName="wslbin.data.native-versions.txt" />
+    <!-- docs\<language>\<file> becomes wslbin.docs.<language>.<file>; one level down only, .txt and .md -->
+    <EmbeddedResource Include="docs\*\*.txt;docs\*\*.md"
+                      LogicalName="wslbin.docs.$([System.String]::Copy('%(RecursiveDir)').TrimEnd('\').TrimEnd('/')).%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

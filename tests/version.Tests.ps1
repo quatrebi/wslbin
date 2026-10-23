@@ -52,7 +52,8 @@ BeforeAll {
     $global:VersionTestWork = $script:Work
 
     $script:SavedGitEnv = @{}
-    foreach ($name in 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_NAMESPACE', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM',
+    foreach ($name in 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_NAMESPACE', 'GIT_COMMON_DIR', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM',
+        'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'HOME', 'XDG_CONFIG_HOME',
         'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_AUTHOR_DATE', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_COMMITTER_DATE') {
         # (a $null given to a .NET method becomes an empty string: an empty GIT_DIR is not the same as none)
         $script:SavedGitEnv[$name] = [Environment]::GetEnvironmentVariable($name)
@@ -60,6 +61,9 @@ BeforeAll {
     }
     $env:GIT_CONFIG_NOSYSTEM = '1'
     $env:GIT_CONFIG_GLOBAL = Join-Path $script:Work 'no-global-gitconfig'
+    # a home folder with nothing in it: no ~/.config/git/ignore or attributes of the person who runs the tests
+    $env:HOME = Join-Path $script:Work 'home'
+    $env:XDG_CONFIG_HOME = Join-Path $script:Work 'home\xdg'
 
     Import-Module $script:Module -Force -DisableNameChecking
 
@@ -234,6 +238,20 @@ Describe 'Get-WslbinVersion' {
             Add-FixtureCommits $c 1
             Get-WslbinVersion -Repo $c -Kind release | Should -BeExactly '0.1.4'
         }
+        It 'finds the first commit by the history, not by the dates (two branches, one clock that was wrong)' {
+            $k = New-VersionRepo '0.1'
+            $null = Invoke-FixtureGit $k @('switch', '-q', '-c', 'side')
+            Set-VersionFile $k '0.1' -Comment "  <!-- <VersionPrefix>0.1</VersionPrefix> -->`n"
+            Save-VersionFile $k 'a comment that quotes the line, on a branch'
+            $null = Invoke-FixtureGit $k @('switch', '-q', 'main')
+            Set-VersionFile $k '0.1' -Indent '        '
+            $env:GIT_COMMITTER_DATE = '2001-01-01T00:00:00'
+            try { Save-VersionFile $k 'a new indent, dated long ago' }
+            finally { Remove-Item -Path 'Env:\GIT_COMMITTER_DATE' -ErrorAction SilentlyContinue }
+            $null = Invoke-FixtureGit $k @('merge', '-q', '--no-ff', '--no-edit', 'side')
+            # the two edits and the merge itself; both edits touch the line, and the older-dated one must not become the base
+            Get-WslbinVersion -Repo $k -Kind release | Should -BeExactly '0.1.3'
+        }
         It 'keeps growing when MAJOR.MINOR goes back to an old value' {
             $r = New-VersionRepo '0.1'
             Add-FixtureCommits $r 2
@@ -373,9 +391,22 @@ Describe 'Get-WslbinVersion' {
             New-Item -ItemType Directory -Path $empty | Out-Null
             { Get-WslbinVersion -Repo $empty -Kind local } | Should -Throw '*wslbin.csproj*is not in*'
         }
-        It 'a version file that is not committed yet, for every kind of build but a local one' {
+        It 'a <Kind> build while the version file is not committed yet' -ForEach @(
+            @{ Kind = 'release'; Extra = @{} }
+            @{ Kind = 'branch'; Extra = @{ Branch = 'develop'; Run = 1 } }
+            @{ Kind = 'pr'; Extra = @{ PullRequest = 1; Run = 1 } }
+        ) {
             $r = New-VersionRepo -NoCommit
-            { Get-WslbinVersion -Repo $r -Kind release } | Should -Throw '*is not committed yet: it is not in HEAD*'
+            { Get-WslbinVersion -Repo $r -Kind $Kind @Extra } | Should -Throw '*is not committed yet: it is not in HEAD*'
+        }
+        It 'a VersionPrefix that is not a line of its own: <Name>' -ForEach @(
+            @{ Name = 'it has an attribute'; Text = "<Project>`n  <PropertyGroup>`n    <VersionPrefix Condition=`"'x' == 'x'`">0.1</VersionPrefix>`n  </PropertyGroup>`n</Project>`n" }
+            @{ Name = 'it is split in lines'; Text = "<Project>`n  <PropertyGroup>`n    <VersionPrefix>`n      0.1`n    </VersionPrefix>`n  </PropertyGroup>`n</Project>`n" }
+        ) {
+            $r = New-VersionRepo
+            [IO.File]::WriteAllText((Join-Path $r 'wslbin.csproj'), $Text, [Text.UTF8Encoding]::new($false))
+            Save-VersionFile $r 'a version file in another form'
+            { Get-WslbinVersion -Repo $r -Kind release } | Should -Throw '*a line of its own*'
         }
         It 'a shallow clone, and says how to get the whole history' {
             $url = 'file:///' + ($script:A -replace '\\', '/')
@@ -456,5 +487,31 @@ Describe 'get-version.ps1 as a program (<Shell>)' -ForEach $Shells {
         $r.ExitCode | Should -Not -Be 0
         $r.Out | Should -BeNullOrEmpty
         $r.Err | Should -Match "'1\.2\.3'"
+    }
+}
+
+Describe 'Test-SemVer' {
+    It 'says <Answer> for <Name>' -ForEach @(
+        @{ Name = 'a release'; Text = '1.2.3'; Answer = $true }
+        @{ Name = 'a version with a prerelease and metadata'; Text = '1.2.3-develop.42+33c8830'; Answer = $true }
+        @{ Name = 'a version that ends with a line break'; Text = "1.2.3`n"; Answer = $false }
+        @{ Name = 'two parts only'; Text = '1.2'; Answer = $false }
+        @{ Name = 'a leading zero'; Text = '01.2.3'; Answer = $false }
+    ) {
+        Test-SemVer $Text | Should -Be $Answer
+    }
+}
+
+Describe 'Get-MajorMinor' {
+    # the module is entered to reach what it does not export
+    It 'reads the version of a text that has <Name> before the first tag' -ForEach @(
+        @{ Name = 'nothing'; Prefix = '' }
+        @{ Name = 'a byte order mark'; Prefix = ([string][char]0xFEFF) }
+        @{ Name = 'what a DOS code page makes of a byte order mark'; Prefix = (-join ([char[]](0x2229, 0x2557, 0x2510))) }
+    ) {
+        $text = $Prefix + "<Project>`n  <PropertyGroup>`n    <VersionPrefix>1.4</VersionPrefix>`n  </PropertyGroup>`n</Project>`n"
+        # (the module of this repository: another copy of it may be loaded in the same session)
+        $module = @(Get-Module Wslbin.Version | Where-Object { $_.Path -eq $script:Module })[0]
+        & $module { param($t) Get-MajorMinor $t } $text | Should -BeExactly '1.4'
     }
 }

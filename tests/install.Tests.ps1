@@ -51,7 +51,9 @@ BeforeAll {
         # Windows PowerShell started from PowerShell 7 with its module path cannot load its own modules
         $null = $psi.Environment.Remove('PSModulePath')
         $psi.Environment['WSLBIN_NO_ELEVATION'] = '1'
-        $psi.Environment['PATH'] = "$env:SystemRoot\System32"
+        # System32 and nothing of the machine's programs, except the folder of dotnet: the installer builds
+        # the program from the source (build.ps1), and that needs the .NET SDK
+        $psi.Environment['PATH'] = "$env:SystemRoot\System32;" + (Split-Path -Parent (Get-Command dotnet).Source)
         $psi.Environment['CLAUDE_CONFIG_DIR'] = Join-Path $global:WslbinTest.Work 'no-claude-folder-here'
         $psi.Environment['CODEX_HOME'] = Join-Path $global:WslbinTest.Work 'no-codex-folder-here'
         $script:LastTemp = Join-Path $global:WslbinTest.Work ('temp-' + [guid]::NewGuid().ToString('N'))
@@ -306,8 +308,11 @@ Describe 'release.yml: the tag must be the version' {
         $tree = Join-Path $global:WslbinTest.Work ('release-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path (Join-Path $tree '.github'), (Join-Path $tree 'bin') | Out-Null
         Copy-Item (Join-Path $script:Repo '.github\check-version.ps1') (Join-Path $tree '.github')
-        Copy-Item $global:WslbinTest.Exe (Join-Path $tree 'bin\wslbin.exe')
-        $version = ((& $global:WslbinTest.Exe --version) -replace '^wslbin ', '').Trim()
+        # a release is built with the version of its tag (the build of the checkout has a suffix, +commit)
+        $built = Join-Path $tree 'bin\wslbin.exe'
+        $null = & (Join-Path $script:Repo 'build.ps1') -Output $built -Version '5.6.7' 6>$null
+        $version = ((& $built --version) -replace '^wslbin ', '').Trim()
+        $version | Should -BeExactly '5.6.7'
         $check = {
             param([string]$Tag)
             $env:TAG = $Tag
@@ -351,8 +356,9 @@ Describe 'install.ps1 in <Shell>' -ForEach $Shells {
         Get-Content -Raw (Join-Path $f.Docs 'PowerShell\profile.ps1') | Should -Match '(?s)^# mine.*>>> wslbin >>>.*--init pwsh'
         Test-Path (Join-Path $f.Docs 'WindowsPowerShell\profile.ps1') | Should -BeTrue
         Get-Content -Raw (Join-Path $f.Clink 'wslbin.lua') | Should -Match 'clink\.generator'
-        # the temporary build folder is gone
-        @(Get-ChildItem $script:LastTemp -Force).Count | Should -Be 0
+        # the temporary build folders of wslbin are gone (dotnet leaves caches and logs of its own in TEMP)
+        $left = @(Get-ChildItem $script:LastTemp -Force | ForEach-Object { $_.Name })
+        @($left | Where-Object { $_ -like '*wslbin*' }) | Should -BeNullOrEmpty -Because "left in TEMP: $($left -join ', ')"
     }
 
     It 'writes the program path into the profile in ASCII, which Windows PowerShell reads in any code page' {
@@ -399,7 +405,9 @@ Describe 'install.ps1 in <Shell>' -ForEach $Shells {
         $tree = Join-Path $work 'wslbin-test'
         New-Item -ItemType Directory -Path $tree | Out-Null
         # what build.ps1 reads (the release zip, made by "git archive", has the whole tree)
-        foreach ($item in 'src', 'data', 'docs', 'shell', 'wsl', 'build.ps1') { Copy-Item -Recurse (Join-Path $script:Repo $item) $tree }
+        foreach ($item in 'src', 'data', 'docs', 'shell', 'wsl', 'build.ps1', 'wslbin.csproj', 'global.json', 'Directory.Build.props', '.editorconfig', 'nuget.config', 'Wslbin.Version.psm1') {
+            Copy-Item -Recurse (Join-Path $script:Repo $item) $tree
+        }
         $zip = Join-Path $work 'source.zip'
         Compress-Archive -Path $tree -DestinationPath $zip
         $hash = (Get-FileHash $zip -Algorithm SHA256).Hash

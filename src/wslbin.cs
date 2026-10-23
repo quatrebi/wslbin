@@ -1,11 +1,11 @@
 // wslbin: run Linux utilities from WSL as ordinary Windows programs.
 //
-// C# 5, no dependencies: it has to build with the compiler that ships with Windows (build.ps1, and the
-// command line in AGENTS.md). DECISIONS.md is the source of truth for behaviour.
+// C# on .NET 10, published as one self-contained Native AOT program with nothing that ships with it
+// (wslbin.csproj, built by build.ps1). DECISIONS.md is the source of truth for behaviour.
 //
 // The files of src/, and what is in them:
 //   wslbin.cs           Program: the entry point, the command line of wrapper copies and wslbin's own
-//                       commands; the version (the assembly attributes below)
+//                       commands
 //   Config.cs           Config: wslbin.ini next to the .exe
 //   Paths.cs            Paths: Windows path -> Linux path
 //   Bash.cs             Bash: one argument -> one bash word (smart / sh / raw)
@@ -28,14 +28,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
-
-[assembly: AssemblyTitle("wslbin")]
-// ProductName is how wslbin recognises its own wrappers (copies of wslbin.exe) among other .exe files.
-[assembly: AssemblyProduct("wslbin")]
-[assembly: AssemblyDescription("Run Linux utilities from WSL as ordinary Windows programs")]
-[assembly: AssemblyVersion("0.1.0.0")]
-[assembly: AssemblyFileVersion("0.1.0.0")]
-[assembly: AssemblyInformationalVersion("0.1.0-dev")]
 
 namespace Wslbin
 {
@@ -90,8 +82,8 @@ namespace Wslbin
         internal static readonly string[] ModeOptions = { RawOption, ShOption, ExplainOption };
         internal static readonly string[] RunOptions = { RawOption, ShOption, ExplainOption, ScriptOption };
 
-        // The version is the one in AssemblyInformationalVersion above, so a release changes it there only
-        // (and in the two numeric attributes next to it).
+        // The version is the AssemblyInformationalVersion that the build writes into the program: MAJOR.MINOR
+        // is VersionPrefix in wslbin.csproj, and get-version.ps1 works out the rest (build.ps1 passes it on).
         internal static readonly string Version =
             ((AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(
                 Assembly.GetExecutingAssembly(), typeof(AssemblyInformationalVersionAttribute))).InformationalVersion;
@@ -166,7 +158,8 @@ namespace Wslbin
 
         static int Run(string[] args)
         {
-            string exePath = Assembly.GetExecutingAssembly().Location;
+            // not Assembly.Location: it is empty in a single-file program
+            string exePath = Environment.ProcessPath;
             string exeName = Path.GetFileNameWithoutExtension(exePath);
             bool isCli = string.Equals(exeName, "wslbin", StringComparison.OrdinalIgnoreCase);
 

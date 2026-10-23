@@ -4,7 +4,7 @@
 # Works in Windows PowerShell 5.1 and PowerShell 7.
 
 # the official regular expression of semver.org (2.0.0)
-$script:SemVerPattern = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
+$script:SemVerPattern = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?\z'
 
 function Test-SemVer {
     param([string]$Version)
@@ -46,6 +46,10 @@ function Get-MajorMinor {
     if ($value -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
         throw "VersionPrefix in wslbin.csproj is '$value', but it must be MAJOR.MINOR (for example 0.1): PATCH is counted from git."
     }
+    # PATCH is found by searching the history for this very line
+    if ($ProjectText -notmatch '(?m)^[ \t]*<VersionPrefix>[^<\r\n]*</VersionPrefix>[ \t]*\r?$') {
+        throw 'VersionPrefix in wslbin.csproj must be a line of its own, <VersionPrefix>MAJOR.MINOR</VersionPrefix>, with no attributes and no line breaks inside.'
+    }
     return $value
 }
 
@@ -80,10 +84,7 @@ function Get-WslbinVersion {
 
     # one full path, with no trailing separator: relative to the location of PowerShell, which is what
     # a person means, and the same for Test-Path, the .NET file calls and git
-    if (-not [System.IO.Path]::IsPathRooted($Repo)) {
-        $Repo = Join-Path (Get-Location -PSProvider FileSystem).ProviderPath $Repo
-    }
-    $Repo = [System.IO.Path]::GetFullPath($Repo)
+    $Repo = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Repo)
     if ($Repo.Length -gt 3) { $Repo = $Repo.TrimEnd('\', '/') }
 
     $projectFile = Join-Path $Repo 'wslbin.csproj'
@@ -116,7 +117,7 @@ function Get-WslbinVersion {
     else {
         $project = Invoke-Git $Repo @('show', "$($full.Out):wslbin.csproj")
         if ($project.Code -ne 0) {
-            throw "wslbin.csproj, which holds MAJOR.MINOR of the version, is not committed yet: it is not in $Commit."
+            throw "wslbin.csproj, which holds MAJOR.MINOR of the version, is not committed yet: it is not in $Commit. ($($project.Err))"
         }
         $projectText = $project.Out
     }
@@ -126,7 +127,9 @@ function Get-WslbinVersion {
     # Not the latest: an edit that keeps the value (a new indent, a comment that quotes the line) would
     # send PATCH back to 0, and a release would have a lower version than an earlier one.
     $pattern = '<VersionPrefix>[[:space:]]*' + ($majorMinor -replace '\.', '\.') + '[[:space:]]*</VersionPrefix>'
-    $found = Invoke-Git $Repo @('log', '--reverse', '--format=%H', "-G$pattern", $full.Out, '--', 'wslbin.csproj')
+    # --topo-order: "oldest" is the one furthest up the history, not the one with the oldest date (a clock
+    # that was wrong); the other options keep the git configuration of the person out of the output
+    $found = Invoke-Git $Repo @('-c', 'log.follow=false', 'log', '--reverse', '--topo-order', '--no-show-signature', '--format=%H', "-G$pattern", $full.Out, '--', 'wslbin.csproj')
     $base = ($found.Out -split "`n")[0]
     if ($found.Code -ne 0) { throw "git log failed in ${Repo}: $($found.Err)" }
     if (-not $base) {
@@ -149,7 +152,11 @@ function Get-WslbinVersion {
         'pr' { $version = "$core-pr$PullRequest.$Run+$sha" }
         'local' {
             $version = "$core-local+$sha"
-            if ($isHead -and (Invoke-Git $Repo @('status', '--porcelain', '--untracked-files=normal')).Out) { $version += '.dirty' }
+            if ($isHead) {
+                $status = Invoke-Git $Repo @('status', '--porcelain', '--untracked-files=normal')
+                if ($status.Code -ne 0) { throw "git status failed in ${Repo}: $($status.Err)" }
+                if ($status.Out) { $version += '.dirty' }
+            }
         }
     }
     if (-not (Test-SemVer $version)) { throw "Internal error: '$version' is not SemVer 2.0." }

@@ -24,13 +24,15 @@ turns `C:\proj\dist\` into `/mnt/c/proj/dist/`, lets bash expand `*.log` by Linu
 everything else, runs the utility in WSL and returns its exit code. Input and output are not
 intercepted, so pipes and full-screen programs work.
 
-> **Status.** `0.1.0-dev`: it works and is tested. The first release, `v0.1.0`, is not made yet:
-> until then, install from a checkout of the source.
+> **Status.** It works and is tested, but there is no release yet: until the first one, install from a
+> checkout of the source.
 
 ## Install
 
-Needs Windows 10 22H2 or Windows 11 with WSL 2 and a distribution. Nothing else: wslbin is compiled
-by the C# compiler that ships with Windows, from the source, on your machine.
+Needs Windows 10 22H2 or Windows 11 with WSL 2 and a distribution. The program is one self-contained
+file and needs nothing else. Until there is a release, `install.ps1` builds it from a checkout of the
+source, and that needs the [.NET SDK 10](https://dotnet.microsoft.com/download) and the C++ build tools
+of Visual Studio (the workload "Desktop development with C++").
 
 ```powershell
 # from a checkout of the source:
@@ -38,7 +40,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Source . -Lin
 
 # from a release (install.ps1 and SHA256SUMS.txt are on the release page; the hash is that of
 # wslbin-<tag>-source.zip; -Repository is quatrebi/wslbin unless you name another):
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.1.0 -Sha256 <hash> -Link make,rsync,dig
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v<version> -Sha256 <hash> -Link make,rsync,dig
 ```
 
 Windows does not run scripts by default, and marks a downloaded `install.ps1` as coming from the
@@ -101,27 +103,42 @@ as [`llms.txt`](llms.txt)). `wslbin --install-ai-context` adds a short marked bl
 instructions of Claude Code (`CLAUDE.md`, and a skill) and Codex (`AGENTS.md`); `--remove` takes it
 out again. Agents that work on wslbin itself: read [`AGENTS.md`](AGENTS.md).
 
-## Build and test
+## Build and contribute
+
+Needs the [.NET SDK 10](https://dotnet.microsoft.com/download), the C++ build tools of Visual Studio
+(the workload "Desktop development with C++") and access to nuget.org until the NuGet packages of the
+AOT compiler and of the runtime are in the cache (the first build, and after an update of the SDK).
+The program is published as Native AOT: one self-contained `.exe` that every wrapper copies.
 
 ```powershell
-.\build.ps1                                        # bin\wslbin.exe, with no SDK and no packages
+.\build.ps1                                        # bin\wslbin.exe, with the version of this checkout
+.\get-version.ps1                                  # that version, as SemVer 2.0
 Invoke-Pester .\tests                              # everything (needs WSL; Clink tests need Clink)
 Invoke-Pester .\tests -ExcludeTagFilter WSL        # what needs neither (this is what CI runs)
 ```
 
-The program is C# 5 in [`src/`](src), one file for each area; [`src/wslbin.cs`](src/wslbin.cs) has the
-entry point and a map of the others. The tests are Pester 5 in PowerShell 7.
+The program is C# on .NET 10 in [`src/`](src), one file for each area; [`src/wslbin.cs`](src/wslbin.cs)
+has the entry point and a map of the others. The tests are Pester 5 in PowerShell 7.
 [`DECISIONS.md`](DECISIONS.md) (in Russian) holds every agreed decision and what was found out on
-the way.
+the way; agents that work on wslbin read [`AGENTS.md`](AGENTS.md).
+
+Versions are automatic (SemVer 2.0). `MAJOR.MINOR` is `VersionPrefix` in
+[`wslbin.csproj`](wslbin.csproj): it is the one thing a pull request changes by hand, and it is never
+lowered. `PATCH` is the number of commits since that value first appeared, and the rest says where a
+build comes from: `0.1.4-develop.42+33c8830` is the 42nd run of the CI, on `develop`, at that commit; a
+release has no suffix. Builds of different branches never have the same version, and
+`wslbin --version` prints it.
 
 ```
 src/               the program
+wslbin.csproj      the project: MAJOR.MINOR of the version, what is built into the .exe
 data/              utilities that have a Windows version of their own (built into the .exe)
 wsl/complete.sh    completion helper that runs in WSL
 shell/             PowerShell and Clink code that "wslbin --init" fills in
 docs/en  docs/ru   help texts (built into the .exe)
 install.ps1        installer and uninstaller
-build.ps1          the build
+build.ps1          the build (dotnet publish, Native AOT)
+get-version.ps1    the version of a build; its functions are in Wslbin.Version.psm1
 tests/             Pester tests
 .github/workflows/ CI and release
 LICENSE            MIT

@@ -24,13 +24,15 @@ dig example.com
 экранирует всё остальное, запускает утилиту в WSL и возвращает её код выхода. Ввод и вывод не
 перехватываются, поэтому работают конвейеры и полноэкранные программы.
 
-> **Состояние.** `0.1.0-dev`: всё работает и покрыто тестами. Первый релиз, `v0.1.0`, ещё не сделан:
-> пока устанавливайте из копии исходников.
+> **Состояние.** Всё работает и покрыто тестами, но релиза ещё нет: до первого устанавливайте из
+> копии исходников.
 
 ## Установка
 
-Нужны Windows 10 22H2 или Windows 11 с WSL 2 и дистрибутивом. Больше ничего: wslbin собирается
-компилятором C#, который входит в Windows, из исходников, у вас на машине.
+Нужны Windows 10 22H2 или Windows 11 с WSL 2 и дистрибутивом. Программа - один самодостаточный файл,
+больше ей ничего не нужно. Пока релиза нет, `install.ps1` собирает её из копии исходников, а для этого
+нужны [.NET SDK 10](https://dotnet.microsoft.com/download) и инструменты сборки C++ из Visual Studio
+(набор "Разработка классических приложений на C++").
 
 ```powershell
 # из копии исходников:
@@ -38,7 +40,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Source . -Lin
 
 # из релиза (install.ps1 и SHA256SUMS.txt лежат на странице релиза; хеш - у wslbin-<тег>-source.zip;
 # -Repository равен quatrebi/wslbin, если не указать другой):
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.1.0 -Sha256 <хеш> -Link make,rsync,dig
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v<версия> -Sha256 <хеш> -Link make,rsync,dig
 ```
 
 Windows по умолчанию не запускает скрипты, а скачанный `install.ps1` помечает как полученный из
@@ -100,26 +102,41 @@ wslbin --list              # обёртки и что с ними не так
 Claude Code (`CLAUDE.md` и навык) и Codex (`AGENTS.md`); `--remove` убирает его. Агентам, которые
 разрабатывают сам wslbin: читайте [`AGENTS.md`](AGENTS.md).
 
-## Сборка и тесты
+## Сборка и участие в разработке
+
+Нужны [.NET SDK 10](https://dotnet.microsoft.com/download), инструменты сборки C++ из Visual Studio
+(набор "Разработка классических приложений на C++") и доступ к nuget.org, пока пакетов NuGet компилятора
+AOT и рантайма нет в кэше (первая сборка и обновление SDK). Программа публикуется как Native AOT: один
+самодостаточный `.exe`, который копирует каждая обёртка.
 
 ```powershell
-.\build.ps1                                        # bin\wslbin.exe, без SDK и пакетов
+.\build.ps1                                        # bin\wslbin.exe, с версией этой копии
+.\get-version.ps1                                  # эта версия, в формате SemVer 2.0
 Invoke-Pester .\tests                              # всё (нужен WSL; тестам Clink нужен Clink)
 Invoke-Pester .\tests -ExcludeTagFilter WSL        # то, что не требует ни того, ни другого (это запускает CI)
 ```
 
-Программа - C# 5 в [`src/`](src), по файлу на каждую область; в [`src/wslbin.cs`](src/wslbin.cs) точка
-входа и карта остальных. Тесты - Pester 5 в PowerShell 7.
-В [`DECISIONS.md`](DECISIONS.md) собраны все принятые решения и то, что выяснилось по дороге.
+Программа - C# на .NET 10 в [`src/`](src), по файлу на каждую область; в [`src/wslbin.cs`](src/wslbin.cs)
+точка входа и карта остальных. Тесты - Pester 5 в PowerShell 7.
+В [`DECISIONS.md`](DECISIONS.md) собраны все принятые решения и то, что выяснилось по дороге; агентам,
+которые работают над wslbin, нужен [`AGENTS.md`](AGENTS.md).
+
+Версии автоматические (SemVer 2.0). `MAJOR.MINOR` - это `VersionPrefix` в
+[`wslbin.csproj`](wslbin.csproj): единственное, что в pull request меняют руками, и его не понижают.
+`PATCH` - число коммитов с тех пор, как это значение появилось, а остальное говорит, откуда сборка:
+`0.1.4-develop.42+33c8830` - это 42-й запуск CI, на `develop`, на этом коммите; у релиза суффикса нет.
+У сборок разных веток версии никогда не совпадают, а `wslbin --version` её печатает.
 
 ```
 src/               программа
+wslbin.csproj      проект: MAJOR.MINOR версии, что вшивается в .exe
 data/              утилиты, у которых есть своя версия для Windows (вшивается в .exe)
 wsl/complete.sh    помощник автодополнения, работает в WSL
 shell/             код для PowerShell и Clink, который заполняет "wslbin --init"
 docs/en  docs/ru   тексты справки (вшиваются в .exe)
 install.ps1        установщик и удаление
-build.ps1          сборка
+build.ps1          сборка (dotnet publish, Native AOT)
+get-version.ps1    версия сборки; её функции - в Wslbin.Version.psm1
 tests/             тесты Pester
 .github/workflows/ CI и релиз
 LICENSE            MIT

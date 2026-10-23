@@ -48,6 +48,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'Wslbin.Version.psm1') -Force -DisableNameChecking
+# (not -Force: that would unload the module from whoever called this script; Local keeps the functions
+# out of their session)
+Import-Module (Join-Path $PSScriptRoot 'Wslbin.Version.psm1') -DisableNameChecking -Scope Local
 
 Get-WslbinVersion -Repo $Repo -Kind $Kind -Branch $Branch -PullRequest $PullRequest -Run $Run -Commit $Commit
