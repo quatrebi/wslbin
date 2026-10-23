@@ -60,6 +60,15 @@ AfterAll {
 }
 
 Describe 'WSL is not installed: wsl.exe answers with its usage text' {
+    It '--doctor says so, with the fix, and takes no line of the text for a distribution' {
+        $wsl = New-FakeWsl -Files @{ 'list.out' = $script:Usage; 'list.exit' = '1' }
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--doctor')
+        $r.ExitCode | Should -Be 125
+        $r.Out | Should -Match '\[FAIL\] WSL is not installed'
+        $r.Out | Should -Match ([regex]::Escape("fix: run 'wsl --install' as administrator"))
+        $r.Out | Should -Not -Match 'distributions:'
+        $r.Out | Should -Not -Match 'default distribution'
+    }
 
     It '--link says so in one line' {
         $wsl = New-FakeWsl -Files @{ 'run.out' = $script:Usage; 'run.exit' = '1' }
@@ -91,6 +100,11 @@ Describe 'WSL is not installed: wsl.exe answers with its usage text' {
 }
 
 Describe 'messages of wsl.exe' {
+    It 'lists the distributions of wsl -l -v and nothing else' {
+        $list = ConvertTo-Utf16 ("  NAME              STATE           VERSION`r`n* Ubuntu-24.04      Running         2`r`n  docker-desktop    Stopped         2`r`n")
+        $wsl = New-FakeWsl -Files @{ 'list.out' = $list; 'run.out' = "5.2.21(1)-release`n" }
+        (Invoke-Fake -Wsl $wsl -Arguments @('--doctor')).Out | Should -Match ([regex]::Escape('[ ok ] distributions: Ubuntu-24.04 (default), docker-desktop'))
+    }
 
     It 'shows a message in another language as it is (wsl.exe writes UTF-16)' {
         # "Нет дистрибутива с указанным именем." and "Код ошибки"
@@ -108,6 +122,25 @@ Describe 'messages of wsl.exe' {
         $r = Invoke-Fake -Wsl $wsl -Arguments @('--link', '--dry-run', 'jq')
         $r.ExitCode | Should -Be 0 -Because $r.Err
         $r.Out | Should -Match 'would create .*jq\.exe'
+    }
+
+    It 'takes a distribution whose state is more than one word (translated), and no indented line of a text' {
+        $state = 'Wird ausgef' + [char]0x00FC + 'hrt'
+        $list = ConvertTo-Utf16 ("  NAME      STATE           VERSION`r`n* Ubuntu    $state    2`r`n" +
+                                 "        Immediately terminates all running distributions and the WSL 2`r`n")
+        $wsl = New-FakeWsl -Files @{ 'list.out' = $list; 'run.out' = "5.2.21(1)-release`n" }
+        $out = (Invoke-Fake -Wsl $wsl -Arguments @('--doctor')).Out
+        $out | Should -Match ([regex]::Escape('[ ok ] distributions: Ubuntu (default)') + '\r?\n')
+    }
+
+    It '--doctor does not call the wrappers "all fine" when WSL could not be asked' {
+        $wsl = New-FakeWsl -Files @{ 'list.out' = $script:Usage; 'list.exit' = '1' }
+        $h = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $h | Out-Null
+        $null = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Arguments @('--internal-link', 'grep')
+        $r = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Env $wsl -Arguments @('--doctor')
+        $r.Out | Should -Match 'wrapper\(s\), not checked in WSL: grep'
+        $r.Out | Should -Not -Match 'all fine'
     }
 
     It '--list does not call a wrapper "ok" when WSL could not be asked' {

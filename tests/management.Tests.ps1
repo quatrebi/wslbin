@@ -1,6 +1,6 @@
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
-  Tests of --link, --unlink and --list. Run: Invoke-Pester ./tests
+  Tests of --link, --unlink, --list and --doctor. Run: Invoke-Pester ./tests
 
   The first Describe blocks need no WSL: wrappers are created through --internal-link, the half
   of --link that does the copying (the half that asks UAC for rights cannot be tested unattended).
@@ -350,6 +350,53 @@ Describe 'with real WSL' -Tag 'WSL' -Skip:$NoWsl {
         ($lines | Where-Object { $_ -match '^make\s' }) | Should -Match 'outdated'
         ($lines | Where-Object { $_ -match '^wslbin-fake-tool\s' }) | Should -Match 'not found in WSL'
         ($lines | Where-Object { $_ -match '^ls\s' }) | Should -Match "PowerShell runs its own 'ls'"
+    }
+
+    Context '--doctor' {
+        It 'passes for a working setup' {
+            $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--doctor')
+            $r.ExitCode | Should -Be 0
+            $r.Out | Should -Match '\[ ok \] wsl\.exe: '
+            $r.Out | Should -Match '\[ ok \] bash \S+ starts'
+            $r.Out | Should -Match '\[ ok \] the folder is in PATH'
+            $r.Out | Should -Not -Match '\[FAIL\]'
+        }
+
+        It 'fails for a distribution that is not installed' {
+            $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Ini 'distro = NoSuchDistro-wslbin-test' -Arguments @('--doctor')
+            $r.ExitCode | Should -Be 125
+            $r.Out | Should -Match '\[FAIL\] distro = NoSuchDistro-wslbin-test'
+        }
+
+        It 'passes with the name of an installed distribution, in any case' {
+            $default = ((& wsl.exe --exec printenv WSL_DISTRO_NAME) -join '').Trim()
+            $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Ini "distro = $($default.ToUpperInvariant())" -Arguments @('--doctor')
+            $r.ExitCode | Should -Be 0
+            $r.Out | Should -Match "\[ ok \] wslbin runs in: $([regex]::Escape($default))"
+        }
+
+        It 'warns about a bad line in wslbin.ini' {
+            $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Ini "not a setting`n" -Arguments @('--doctor')
+            $r.Out | Should -Match "\[warn\] wslbin.ini line 1: expected 'key = value'"
+        }
+
+        It 'warns when the folder is not in PATH' {
+            $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env @{ PATH = "$env:SystemRoot\System32" } -Arguments @('--doctor')
+            $r.Out | Should -Match '\[warn\] the folder is not in PATH'
+            $r.ExitCode | Should -Be 0
+        }
+
+        It 'reads the list of distributions also when WSL_UTF8=1 is set' {
+            $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env (@{ WSL_UTF8 = '1' } + $script:Env) -Arguments @('--doctor')
+            $r.Out | Should -Match '\[ ok \] distributions: '
+            $r.Out | Should -Not -Match 'no WSL distribution is installed'
+        }
+
+        It 'warns about wrappers with problems' {
+            $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'wslbin-fake-tool')
+            $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--doctor')
+            $r.Out | Should -Match '\[warn\] wslbin-fake-tool: not found in WSL'
+        }
     }
 
     It 'finds tools in extra directories with the path key, and not without it' {

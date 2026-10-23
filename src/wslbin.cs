@@ -16,6 +16,7 @@
 //   Wrappers.cs         Wrappers (copies of wslbin.exe named after utilities), SearchPath (the PATH of
 //                       Windows), Conflicts (names that Windows already uses), Elevation (administrator rights)
 //   WrapperCommands.cs  WrapperCommands: --link, --unlink, --list; Apt: installing a utility that WSL lacks
+//   Doctor.cs           Doctor: --doctor
 //   Out.cs              Out: console output that does not depend on the console code page
 
 using System;
@@ -103,6 +104,7 @@ namespace Wslbin
                 new Command { Name = "--link", Run = a => WrapperCommands.Link(a, exePath, config()) },
                 new Command { Name = "--unlink", Run = a => WrapperCommands.Unlink(a, exePath) },
                 new Command { Name = "--list", Run = a => WrapperCommands.List(a, exePath, config()) },
+                new Command { Name = "--doctor", Run = a => Doctor.Run(a, exePath) },
                 // the elevated halves of --link and --unlink; not for people
                 new Command { Name = "--internal-link", Run = a => WrapperCommands.InternalLink(a, exePath) },
                 new Command { Name = "--internal-unlink", Run = a => WrapperCommands.InternalUnlink(a, exePath) }
