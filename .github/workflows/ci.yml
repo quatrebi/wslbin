@@ -1,9 +1,11 @@
-# Builds the program and runs the tests on every push to main and develop and on every pull request.
+# Builds the program once and runs the tests on it, on every push to main and develop and on every pull
+# request.
 #
 # The version of a build is worked out from git (get-version.ps1), so that a push to a branch, a pull
 # request and a release never share one. The program is kept as an artifact for 14 days, before the tests
-# run, so that a red test run still leaves it. The tests that need WSL do not run here (the runners have
-# none); the escaping is still checked by the Git Bash that the runners have.
+# run, so that a red test run still leaves it. The tests take that very program (WSLBIN_TEST_EXE) instead
+# of building their own. The tests that need WSL do not run here (the runners have none); the escaping is
+# still checked by the Git Bash that the runners have.
 #
 # What anyone can choose (the name of a branch, the number of a pull request) reaches the scripts through
 # env: only, never pasted into the text of a run:; tests/workflows.Tests.ps1 checks that. The actions are
@@ -88,9 +90,15 @@ jobs:
             Install-Module Pester -MinimumVersion 5.0.0 -Scope CurrentUser -Force -SkipPublisherCheck
           }
 
-      - name: Test (everything not tagged WSL)
+      - name: Test (everything not tagged WSL) on the program that was built
         shell: pwsh
         run: |
+          # every test file takes this program instead of building its own (the tests of the build and of the
+          # stand-in wsl.exe still build theirs); a copy outside bin\, which a build may write
+          $exe = Join-Path $env:RUNNER_TEMP 'wslbin-under-test\wslbin.exe'
+          New-Item -ItemType Directory -Path (Split-Path -Parent $exe) -Force | Out-Null
+          Copy-Item -LiteralPath bin/wslbin.exe -Destination $exe
+          $env:WSLBIN_TEST_EXE = $exe
           Import-Module Pester -MinimumVersion 5.0.0
           $config = New-PesterConfiguration
           $config.Run.Path = './tests'

@@ -6,7 +6,15 @@ function Initialize-WslbinTest {
     $work = Join-Path ([IO.Path]::GetTempPath()) ('wslbin-tests-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $work | Out-Null
     $exe = Join-Path $work 'wslbin.exe'
-    & (Join-Path $repo 'build.ps1') -Output $exe 6>$null
+    # WSLBIN_TEST_EXE names a wslbin.exe that is built already (CI builds it once, before the tests):
+    # every test file would otherwise run build.ps1 again
+    if ($env:WSLBIN_TEST_EXE) {
+        if (-not (Test-Path -LiteralPath $env:WSLBIN_TEST_EXE)) { throw "WSLBIN_TEST_EXE names no file: $env:WSLBIN_TEST_EXE" }
+        Copy-Item -LiteralPath $env:WSLBIN_TEST_EXE $exe
+    }
+    else {
+        & (Join-Path $repo 'build.ps1') -Output $exe 6>$null
+    }
     if (-not (Test-Path $exe)) { throw 'build.ps1 did not produce wslbin.exe' }
     $global:WslbinTest = @{ Repo = $repo; Work = $work; Exe = $exe }
 }
