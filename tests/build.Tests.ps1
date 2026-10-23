@@ -53,16 +53,18 @@ Describe 'wslbin.csproj' {
     It 'holds MAJOR.MINOR as VersionPrefix' {
         Get-ProjectValue 'VersionPrefix' | Should -Match '^(0|[1-9]\d*)\.(0|[1-9]\d*)$'
     }
-    It 'does not turn on InvariantGlobalization or UseSystemResourceKeys: the help language follows the UI culture' {
+    It 'does not turn on UseSystemResourceKeys: the "internal error" message keeps the texts of exceptions' {
         # (MSBuild reads true in any case)
-        Get-ProjectValue 'InvariantGlobalization' | Should -Not -Be 'true'
         Get-ProjectValue 'UseSystemResourceKeys' | Should -Not -Be 'true'
         $props = Join-Path $script:Repo 'Directory.Build.props'
-        if (Test-Path $props) {
-            $text = Get-Content -Raw $props
-            $text | Should -Not -Match '<InvariantGlobalization>\s*true'
-            $text | Should -Not -Match '<UseSystemResourceKeys>\s*true'
-        }
+        if (Test-Path $props) { Get-Content -Raw $props | Should -Not -Match '<UseSystemResourceKeys>\s*true' }
+    }
+    It 'is built with InvariantGlobalization and size first, so the source asks Windows for its language, not CultureInfo' {
+        Get-ProjectValue 'InvariantGlobalization' | Should -Be 'true'
+        Get-ProjectValue 'OptimizationPreference' | Should -Be 'Size'
+        # with InvariantGlobalization the current culture is the invariant one: it would always be English
+        Get-ChildItem (Join-Path $script:Repo 'src') -Filter '*.cs' |
+            Select-String -Pattern 'CultureInfo\.(CurrentUICulture|CurrentCulture)' | Should -BeNullOrEmpty
     }
     It 'embeds the 22 resources under their names' {
         $json = & dotnet msbuild (Join-Path $script:Repo 'wslbin.csproj') -getItem:EmbeddedResource -nologo | Out-String
