@@ -1,0 +1,47 @@
+# Builds wslbin and runs the tests that need neither WSL nor Clink (there is no WSL 2 on the hosted
+# runners; the tests tagged WSL, Clink included, run on a developer's machine). The escaping is still
+# checked by a real bash here: the runners have Git Bash, and tests/wslbin.Tests.ps1 runs the
+# commands that --wslbin-explain prints in it.
+#
+# Not run yet: the repository has not been pushed to GitHub. The actions are pinned to the commit of
+# a release tag (checked with "git ls-remote --tags" on 2026-10-21; the comment names the tag).
+# To move to a newer version, look up its commit the same way.
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build with the compiler that ships with Windows
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Pester 5 or later
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable Pester | Where-Object { $_.Version -ge [version]'5.0.0' })) {
+            Install-Module Pester -MinimumVersion 5.0.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+
+      - name: Test (everything not tagged WSL)
+        shell: pwsh
+        run: |
+          Import-Module Pester -MinimumVersion 5.0.0
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests'
+          $config.Run.Exit = $true
+          $config.Filter.ExcludeTag = 'WSL'
+          $config.Output.Verbosity = 'Normal'
+          Invoke-Pester -Configuration $config
