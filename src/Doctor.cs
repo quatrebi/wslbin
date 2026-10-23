@@ -1,231 +1,250 @@
 // wslbin: --doctor.
 
-using System;
-using System.Collections.Generic;
-using System.IO;
 using Microsoft.Win32;
 
-namespace Wslbin
+namespace Wslbin;
+
+// --doctor: lines "[ ok ]", "[warn]" and "[FAIL]", each problem with a "fix:" line.
+internal static class Doctor
 {
-    // --doctor: lines "[ ok ]", "[warn]" and "[FAIL]", each problem with a "fix:" line.
-    internal static class Doctor
+    sealed class Report(Action<string> write)
     {
-        sealed class Report
-        {
-            public int Failures;
-            public int Warnings;
+        public int Failures { get; private set; }
+        public int Warnings { get; private set; }
 
-            public void Ok(string text) { Out.Info("[ ok ] " + text); }
-            public void Warn(string text) { Warnings++; Out.Info("[warn] " + text); }
-            public void Fail(string text) { Failures++; Out.Info("[FAIL] " + text); }
-            public void Hint(string text) { Out.Info("       " + text); }
-            // advice, not a problem: it changes neither the counts nor the exit code
-            public void Info(string text) { Out.Info("[info] " + text); }
+        public void Ok(string text) => write($"[ ok ] {text}");
+        public void Warn(string text) { Warnings++; write($"[warn] {text}"); }
+        public void Fail(string text) { Failures++; write($"[FAIL] {text}"); }
+        public void Hint(string text) => write($"       {text}");
+        // advice, not a problem: it changes neither the counts nor the exit code
+        public void Info(string text) => write($"[info] {text}");
+    }
+
+    public static int Run(IList<string> args, string exePath)
+    {
+        Options.None(args, "--doctor");
+        var report = new Report(Out.Info);
+        string dir = Path.GetDirectoryName(exePath)!;
+        Out.Info($"wslbin {Program.Version}, {exePath}");
+        report.Ok($"install type: {InstallType(dir)}");
+
+        List<string> configProblems = [];
+        string configPath = Config.PathFor(exePath);
+        Config cfg = Config.Load(configPath, configProblems.Add);
+        report.Ok(File.Exists(configPath) ? $"config: {configPath}" : $"config: none (defaults; {configPath} does not exist)");
+        foreach (string problem in configProblems) report.Warn(problem);
+
+        bool wslWorks = false;
+        try
+        {
+            report.Ok($"wsl.exe: {Launcher.FindWsl()}");
+            wslWorks = CheckWsl(report, cfg);
+        }
+        catch (WslbinException ex)
+        {
+            report.Fail(ex.Message);
+            report.Hint($"fix: {ex.Fix ?? WslQuery.InstallFix}");
         }
 
-        public static int Run(IList<string> args, string exePath)
+        CheckPath(report, exePath);
+        CheckWrappers(report, cfg, exePath, wslWorks);
+
+        Out.Info("");
+        Out.Info(report.Failures == 0 && report.Warnings == 0
+            ? "Everything looks fine."
+            : $"{report.Failures} problem(s), {report.Warnings} warning(s).");
+        return report.Failures == 0 ? 0 : ExitCodes.Failed;
+    }
+
+    static string InstallType(string dir)
+    {
+        string? localAppData = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+        if (IsUnder(dir, Environment.GetEnvironmentVariable("ProgramFiles")) || IsUnder(dir, Environment.GetEnvironmentVariable("ProgramFiles(x86)")))
+            return "system (needs administrator rights to change wrappers)";
+        if (localAppData != null && IsUnder(dir, Path.Combine(localAppData, "Programs"))) return "user";
+        return $"portable (run from {dir})";
+    }
+
+    static bool IsUnder(string dir, string? root)
+    {
+        if (string.IsNullOrEmpty(root)) return false;
+        try
         {
-            if (args.Count > 0) throw new WslbinException("--doctor takes no arguments");
-            var report = new Report();
-            string dir = Path.GetDirectoryName(exePath);
-            Out.Info("wslbin " + Program.Version + ", " + exePath);
-            report.Ok("install type: " + InstallType(dir));
-
-            var configProblems = new List<string>();
-            string configPath = Config.PathFor(exePath);
-            Config cfg = Config.Load(configPath, configProblems.Add);
-            report.Ok(File.Exists(configPath) ? "config: " + configPath : "config: none (defaults; " + configPath + " does not exist)");
-            foreach (string problem in configProblems) report.Warn(problem);
-
-            bool wslWorks = false;
-            try
-            {
-                report.Ok("wsl.exe: " + Launcher.FindWsl());
-                wslWorks = CheckWsl(report, cfg);
-            }
-            catch (WslbinException ex)
-            {
-                report.Fail(ex.Message);
-                report.Hint("fix: " + WslQuery.InstallFix);
-            }
-
-            CheckPath(report, dir);
-            CheckWrappers(report, cfg, exePath, wslWorks);
-
-            Out.Info("");
-            if (report.Failures == 0 && report.Warnings == 0) Out.Info("Everything looks fine.");
-            else Out.Info(report.Failures + " problem(s), " + report.Warnings + " warning(s).");
-            return report.Failures == 0 ? 0 : ExitCodes.Failed;
-        }
-
-        static string InstallType(string dir)
-        {
-            string programFiles = Environment.GetEnvironmentVariable("ProgramFiles");
-            string programFilesX86 = Environment.GetEnvironmentVariable("ProgramFiles(x86)");
-            string localAppData = Environment.GetEnvironmentVariable("LOCALAPPDATA");
-            if (IsUnder(dir, programFiles) || IsUnder(dir, programFilesX86)) return "system (needs administrator rights to change wrappers)";
-            if (localAppData != null && IsUnder(dir, Path.Combine(localAppData, "Programs"))) return "user";
-            return "portable (run from " + dir + ")";
-        }
-
-        static bool IsUnder(string dir, string root)
-        {
-            if (string.IsNullOrEmpty(root)) return false;
             string d = Path.GetFullPath(dir).TrimEnd('\\') + "\\";
             string r = Path.GetFullPath(root).TrimEnd('\\') + "\\";
             return d.StartsWith(r, StringComparison.OrdinalIgnoreCase);
         }
-
-        // Returns whether bash runs in WSL. Throws WslbinException when WSL itself is missing.
-        static bool CheckWsl(Report report, Config cfg)
+        catch (Exception ex) when (ex is ArgumentException or IOException)
         {
-            List<Distro> distros = WslQuery.Distros();
-            if (distros.Count == 0)
-            {
-                report.Fail("no WSL distribution is installed");
-                report.Hint("fix: wsl --install -d Ubuntu");
-                return false;
-            }
-            var shown = new List<string>();
-            foreach (Distro d in distros) shown.Add(d.Name + (d.IsDefault ? " (default)" : ""));
-            report.Ok("distributions: " + string.Join(", ", shown));
+            return false;      // a variable that holds no path
+        }
+    }
 
-            Distro target = null;
-            foreach (Distro d in distros)
-            {
-                if (cfg.Distro.Length > 0 ? d.Name.Equals(cfg.Distro, StringComparison.OrdinalIgnoreCase) : d.IsDefault) target = d;
-            }
-            if (target == null)
-            {
-                if (cfg.Distro.Length > 0)
-                {
-                    report.Fail("distro = " + cfg.Distro + " in wslbin.ini is not an installed distribution");
-                    report.Hint("fix: use one of the names above, or remove the line to use the default");
-                }
-                else
-                {
-                    report.Fail("there is no default distribution");
-                    report.Hint("fix: wsl --set-default <name>, or set distro = <name> in wslbin.ini");
-                }
-                return false;
-            }
-            report.Ok("wslbin runs in: " + target.Name + (cfg.Distro.Length == 0 ? " (the default)" : ""));
-            if (target.Version != "2") report.Warn(target.Name + " runs under WSL " + target.Version + "; wslbin is made for WSL 2");
+    // Returns whether bash runs in WSL. Throws WslbinException when WSL itself is missing or stuck.
+    static bool CheckWsl(Report report, Config cfg)
+    {
+        List<Distro> distros = WslQuery.Distros();
+        if (distros.Count == 0)
+        {
+            report.Fail("no WSL distribution is installed");
+            report.Hint("fix: wsl --install -d Ubuntu");
+            return false;
+        }
+        report.Ok($"distributions: {string.Join(", ", distros.Select(d => d.Name + (d.IsDefault ? " (default)" : "")))}");
 
-            WslResult bash = WslQuery.RunBash(cfg, "echo \"$BASH_VERSION\"");
-            string version = bash.Output.Trim();
-            if (bash.ExitCode != 0 || version.Length == 0)
+        Distro? target = distros.LastOrDefault(d => cfg.Distro.Length > 0 ? d.Name.Equals(cfg.Distro, StringComparison.OrdinalIgnoreCase) : d.IsDefault);
+        if (target == null)
+        {
+            if (cfg.Distro.Length > 0)
             {
-                report.Fail("cannot run bash in WSL" + WslQuery.Detail(bash));
-                return false;
-            }
-            report.Ok("bash " + version + " starts");
-
-            WslResult completion = WslQuery.RunBash(cfg, "[ -r /usr/share/bash-completion/bash_completion ] && echo yes || echo no");
-            if (completion.Output.Trim() == "yes")
-            {
-                report.Ok("bash-completion is installed in WSL");
+                report.Fail($"distro = {cfg.Distro} in wslbin.ini is not an installed distribution");
+                report.Hint("fix: use one of the names above, or remove the line to use the default");
             }
             else
             {
-                report.Warn("bash-completion is not installed in WSL: Tab completion of wrappers will have nothing to offer");
-                report.Hint("fix: wsl -u root apt-get install bash-completion");
+                report.Fail("there is no default distribution");
+                report.Hint("fix: wsl --set-default <name>, or set distro = <name> in wslbin.ini");
             }
+            return false;
+        }
+        report.Ok($"wslbin runs in: {target.Name}{(cfg.Distro.Length == 0 ? " (the default)" : "")}");
+        if (target.Version != "2") report.Warn($"{target.Name} runs under WSL {target.Version}; wslbin is made for WSL 2");
 
-            // bash starts without the profile, so the usual per-user tool directories are not in PATH.
-            const string script =
-                "for d in .local/bin .cargo/bin go/bin; do if [ -d \"$HOME/$d\" ]; then " +
-                "case \":$PATH:\" in *\":$HOME/$d:\"*) ;; *) echo \"~/$d\";; esac; fi; done";
-            WslResult tools = WslQuery.RunBash(cfg, cfg.PathPrefix() + script);
-            var missing = new List<string>();
-            foreach (string line in tools.Output.Replace("\r", "").Split('\n'))
-            {
-                if (line.Length > 0) missing.Add(line);
-            }
-            if (missing.Count > 0)
-            {
-                report.Warn("directories with user-installed tools exist in WSL but are not in PATH for wslbin: " +
-                            string.Join(", ", missing) + " (bash starts without the profile, so tools there are not found)");
-                report.Hint("fix: add to wslbin.ini:  path = " + string.Join(", ", missing));
-            }
-            return true;
+        WslResult bash = WslQuery.RunBash(cfg, "echo \"$BASH_VERSION\"");
+        string version = bash.Output.Trim();
+        if (bash.ExitCode != 0 || version.Length == 0)
+        {
+            report.Fail("cannot run bash in WSL" + WslQuery.Detail(bash));
+            return false;
+        }
+        report.Ok($"bash {version} starts");
+
+        WslResult completion = WslQuery.RunBash(cfg, "[ -r /usr/share/bash-completion/bash_completion ] && echo yes || echo no");
+        if (completion.Output.Trim() == "yes")
+        {
+            report.Ok("bash-completion is installed in WSL");
+        }
+        else
+        {
+            report.Warn("bash-completion is not installed in WSL: Tab completion of wrappers will have nothing to offer");
+            report.Hint("fix: wsl -u root apt-get install bash-completion");
         }
 
-        static void CheckPath(Report report, string dir)
+        // bash starts without the profile, so the usual per-user tool directories are not in PATH.
+        const string Script =
+            "for d in .local/bin .cargo/bin go/bin; do if [ -d \"$HOME/$d\" ]; then " +
+            "case \":$PATH:\" in *\":$HOME/$d:\"*) ;; *) echo \"~/$d\";; esac; fi; done";
+        List<string> missing = Text.Lines(WslQuery.RunBash(cfg, cfg.PathPrefix() + Script).Output);
+        if (missing.Count > 0)
         {
-            if (SearchPath.Contains(Environment.GetEnvironmentVariable("PATH"), dir))
-            {
-                report.Ok("the folder is in PATH");
-                return;
-            }
-            string where = null;
-            if (SearchPath.Contains(ReadRegistryPath(Registry.CurrentUser, "Environment"), dir)) where = "user";
-            else if (SearchPath.Contains(ReadRegistryPath(Registry.LocalMachine,
-                     @"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"), dir)) where = "system";
+            report.Warn("directories with user-installed tools exist in WSL but are not in PATH for wslbin: " +
+                        $"{string.Join(", ", missing)} (bash starts without the profile, so tools there are not found)");
+            report.Hint($"fix: add to wslbin.ini:  path = {string.Join(", ", missing)}");
+        }
+        return true;
+    }
 
+    static void CheckPath(Report report, string exePath)
+    {
+        string dir = Path.GetDirectoryName(exePath)!;
+        if (SearchPath.Contains(Environment.GetEnvironmentVariable("PATH"), dir))
+        {
+            report.Ok("the folder is in PATH");
+        }
+        else
+        {
+            string? where =
+                SearchPath.Contains(ReadRegistryPath(Registry.CurrentUser, "Environment"), dir) ? "user" :
+                SearchPath.Contains(ReadRegistryPath(Registry.LocalMachine, @"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"), dir) ? "system" :
+                null;
             if (where != null)
             {
-                report.Warn("the folder is in the " + where + " PATH, but not in PATH of this terminal");
+                report.Warn($"the folder is in the {where} PATH, but not in PATH of this terminal");
                 report.Hint("fix: open a new terminal");
             }
             else
             {
-                report.Warn("the folder is not in PATH, so wrappers are not found by name: " + dir);
+                report.Warn($"the folder is not in PATH, so wrappers are not found by name: {dir}");
                 report.Hint("fix: add it to PATH (the installer does that)");
             }
         }
+        CheckOtherCopies(report, exePath);
+    }
 
-        static string ReadRegistryPath(RegistryKey root, string subKey)
+    // Another wslbin in PATH (an older installation in the other scope, a portable copy): "wslbin"
+    // in a terminal starts whichever comes first, and wrappers of the same name compete the same way.
+    static void CheckOtherCopies(Report report, string exePath)
+    {
+        string dir = Path.GetDirectoryName(exePath)!;
+        bool ownSeen = false;
+        foreach (string found in SearchPath.FindAll("wslbin", null))
         {
-            using (RegistryKey key = root.OpenSubKey(subKey))
+            if (SearchPath.SameFolder(Path.GetDirectoryName(found)!, dir))
             {
-                if (key == null) return "";
-                string value = key.GetValue("Path", "", RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
-                return Environment.ExpandEnvironmentVariables(value ?? "");
+                ownSeen = true;
+                continue;
+            }
+            report.Warn(ownSeen
+                ? $"another wslbin is in PATH: {found} (this one comes first)"
+                : $"another wslbin comes first in PATH: {found}, so \"wslbin\" in a terminal starts that one");
+            report.Hint("fix: uninstall the copy that is not wanted (Settings > Apps), or take its folder out of PATH");
+        }
+    }
+
+    static string ReadRegistryPath(RegistryKey root, string subKey)
+    {
+        try
+        {
+            using RegistryKey? key = root.OpenSubKey(subKey);
+            string? value = key?.GetValue("Path", "", RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
+            return Environment.ExpandEnvironmentVariables(value ?? "");
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return "";
+        }
+    }
+
+    static void CheckWrappers(Report report, Config cfg, string exePath, bool wslWorks)
+    {
+        string dir = Path.GetDirectoryName(exePath)!;
+        List<string> wrappers = Wrappers.Enumerate(dir, exePath);
+        if (wrappers.Count == 0)
+        {
+            report.Ok("no wrappers yet (create them with: wslbin --link <utility>...)");
+            return;
+        }
+        Dictionary<string, bool>? present = null;
+        if (wslWorks)
+        {
+            try
+            {
+                present = WslQuery.Which(cfg, wrappers);
+            }
+            catch (WslbinException ex)
+            {
+                report.Warn($"could not ask WSL which utilities exist: {ex.Message}");
             }
         }
-
-        static void CheckWrappers(Report report, Config cfg, string exePath, bool wslWorks)
+        byte[] self = File.ReadAllBytes(exePath);
+        int bad = 0;
+        foreach (string n in wrappers)
         {
-            string dir = Path.GetDirectoryName(exePath);
-            List<string> wrappers = Wrappers.Enumerate(dir, exePath);
-            if (wrappers.Count == 0)
-            {
-                report.Ok("no wrappers yet (create them with: wslbin --link <utility>...)");
-                return;
-            }
-            Dictionary<string, bool> present = null;
-            if (wslWorks)
-            {
-                try
-                {
-                    present = WslQuery.Presence(cfg, wrappers);
-                }
-                catch (WslbinException ex)
-                {
-                    report.Warn("could not ask WSL which utilities exist: " + ex.Message);
-                }
-            }
-            int bad = 0;
-            foreach (string n in wrappers)
-            {
-                List<string> problems = WrapperCommands.Problems(n, exePath, present);
-                if (problems.Count == 0) continue;
-                bad++;
-                report.Warn(n + ": " + string.Join("; ", problems));
-            }
-            // "all fine" would claim that the utilities are in WSL, which nobody could check
-            if (bad == 0 && present == null) report.Ok(wrappers.Count + " wrapper(s), not checked in WSL: " + string.Join(", ", wrappers));
-            else if (bad == 0) report.Ok(wrappers.Count + " wrapper(s), all fine: " + string.Join(", ", wrappers));
+            List<string> problems = Wrappers.Check(n, dir, self, present);
+            if (problems.Count == 0) continue;
+            bad++;
+            report.Warn($"{n}: {string.Join("; ", problems)}");
+        }
+        // "all fine" would claim that the utilities are in WSL, which nobody could check
+        string list = string.Join(", ", wrappers);
+        if (bad == 0) report.Ok($"{wrappers.Count} wrapper(s), {(present == null ? "not checked in WSL" : "all fine")}: {list}");
 
-            // A Windows version that is installed already clashes with the wrapper, and that is reported above.
-            Dictionary<string, string> native = NativeVersions.Load();
-            foreach (string n in wrappers)
-            {
-                string package;
-                if (!native.TryGetValue(n, out package) || Conflicts.Hard(n, dir) != null) continue;
-                report.Info(n + " has a Windows version of its own, which starts faster and needs no WSL: winget install --exact --id " + package);
-            }
+        // A Windows version that is installed already clashes with the wrapper, and that is reported above.
+        Dictionary<string, string> native = NativeVersions.Load();
+        foreach (string n in wrappers)
+        {
+            if (!native.TryGetValue(n, out string? package) || Conflicts.Find(n, dir) != null) continue;
+            report.Info($"{n} has a Windows version of its own, which starts faster and needs no WSL: winget install --exact --id {package}");
         }
     }
 }

@@ -6,282 +6,271 @@
 // The files of src/, and what is in them:
 //   wslbin.cs           Program: the entry point, the command line of wrapper copies and wslbin's own
 //                       commands
+//   Options.cs          Options: the options of wslbin's own commands
 //   Config.cs           Config: wslbin.ini next to the .exe
 //   Paths.cs            Paths: Windows path -> Linux path
+//   Folder.cs           Folder: the current folder, and whether a command can run in it
 //   Bash.cs             Bash: one argument -> one bash word (smart / sh / raw)
 //   EnvPlan.cs          EnvPlan: Windows variables handed to Linux through WSLENV
-//   Launcher.cs         Launcher: wsl.exe command line, starting a child in the console, exit codes;
+//   Launcher.cs         Launcher: wsl.exe command line, starting a child, exit codes;
 //                       ChildJob: ending wsl.exe when wslbin ends
 //   WslQuery.cs         WslQuery: what wslbin learns about WSL (wsl.exe calls whose output it reads, the registry)
 //   Wrappers.cs         Wrappers (copies of wslbin.exe named after utilities), SearchPath (the PATH of
-//                       Windows), Conflicts (names that Windows already uses), Elevation (administrator rights)
-//   WrapperCommands.cs  WrapperCommands: --link, --unlink, --list; Apt: installing a utility that WSL lacks
+//                       Windows), Conflicts (names that Windows already uses)
+//   Elevation.cs        Elevation: administrator rights for --link and --unlink
+//   WrapperCommands.cs  WrapperCommands: --link, --unlink, --list
+//   Apt.cs              Apt: installing a utility that WSL lacks
 //   NativeVersions.cs   NativeVersions: utilities that have a Windows version of their own (data/native-versions.txt)
 //   Doctor.cs           Doctor: --doctor
-//   Help.cs             Help: --help [topic]; Resources: texts built into the .exe (build.ps1)
+//   Help.cs             Help: --help [topic]
+//   Resources.cs        Resources: texts built into the .exe (wslbin.csproj)
 //   AiContext.cs        AiContext: --ai-context, --install-ai-context
 //   Completion.cs       Completion: --complete, Tab completion for the shells
 //   Init.cs             Init: --init pwsh | clink
+//   Text.cs             Text: lines, strict UTF-8, files written all or nothing
 //   Out.cs              Out: console output that does not depend on the console code page
 
-using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Reflection;
 
-namespace Wslbin
+namespace Wslbin;
+
+/// <summary>An error that is reported to the user as one line, without a stack trace.</summary>
+internal sealed class WslbinException(string message) : Exception(message)
 {
-    /// <summary>An error that is reported to the user as one line, without a stack trace.</summary>
-    internal sealed class WslbinException : Exception
+    /// <summary>What to do about it, when that is not the usual advice (--doctor shows it).</summary>
+    public string? Fix { get; init; }
+}
+
+internal enum ArgMode
+{
+    /// <summary>Windows paths translated, globs left to bash, everything else escaped.</summary>
+    Smart,
+    /// <summary>Smart, plus Linux variables and command substitutions in arguments that contain $ or `.</summary>
+    Sh,
+    /// <summary>Arguments exactly as typed: nothing translated, nothing expanded.</summary>
+    Raw
+}
+
+internal static class ExitCodes
+{
+    // The convention of env, timeout, nice and docker: 125 means the wrapper itself failed.
+    // 126 and 127 (cannot run, not found) come from bash unchanged.
+    public const int Failed = 125;
+    // What a shell reports for a command stopped by Ctrl+C: 128 + SIGINT.
+    public const int Interrupted = 130;
+}
+
+/// <summary>What the user asked for, before config and escaping are applied.</summary>
+internal sealed class Invocation
+{
+    public string? Utility { get; set; }        // null in the "wslbin -c" form
+    public string? Script { get; set; }         // the bash string in the "wslbin -c" form
+    public List<string> Args { get; } = [];
+    public ArgMode? Mode { get; set; }          // null: take it from the config
+    public bool Explain { get; set; }
+}
+
+internal static class Program
+{
+    // The flags of a wrapper copy, in front of the utility's arguments.
+    internal const string RawFlag = "--wslbin-raw";
+    internal const string ShFlag = "--wslbin-sh";
+    internal const string ExplainFlag = "--wslbin-explain";
+    internal static readonly string[] WrapperFlags = [RawFlag, ShFlag, ExplainFlag];
+
+    // The options of "wslbin [--raw | --sh] [--explain] <utility>" and "wslbin -c".
+    internal const string RawOption = "--raw";
+    internal const string ShOption = "--sh";
+    internal const string ExplainOption = "--explain";
+    internal const string ScriptOption = "-c";
+    internal static readonly string[] ModeOptions = [RawOption, ShOption, ExplainOption];
+    internal static readonly string[] RunOptions = [RawOption, ShOption, ExplainOption, ScriptOption];
+
+    // The version is the AssemblyInformationalVersion that the build writes into the program: MAJOR.MINOR
+    // is VersionPrefix in wslbin.csproj, and get-version.ps1 works out the rest (build.ps1 passes it on).
+    internal static readonly string Version =
+        typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
+
+    /// <summary>The program and its config, read when a command first needs it.</summary>
+    sealed class Context(string exePath)
     {
-        public WslbinException(string message) : base(message) { }
+        public string ExePath => exePath;
+        public Config Config => field ??= Config.Load(Config.PathFor(exePath), Out.Warn);
     }
 
-    internal enum ArgMode
+    // Hidden: not offered by Tab completion (for shells, or for wslbin itself).
+    sealed record Command(string Name, Func<Context, IList<string>, int> Run, bool Hidden = false);
+
+    // wslbin's own commands. Everything else that starts with "-" is an error; a word is a utility.
+    static readonly Command[] Commands =
+    [
+        new("--help", (c, a) => Help.Run(a, c.Config)),
+        new("-h", (c, a) => Help.Run(a, c.Config), Hidden: true),
+        new("-?", (c, a) => Help.Run(a, c.Config), Hidden: true),
+        new("--version", (_, a) => PrintVersion(a)),
+        new("--link", (c, a) => WrapperCommands.Link(a, c.ExePath, c.Config)),
+        new("--unlink", (c, a) => WrapperCommands.Unlink(a, c.ExePath)),
+        new("--list", (c, a) => WrapperCommands.List(a, c.ExePath, c.Config)),
+        new("--doctor", (c, a) => Doctor.Run(a, c.ExePath)),
+        new("--init", (c, a) => Init.Run(a, c.ExePath)),
+        new("--ai-context", (c, a) => AiContext.Print(a, c.Config)),
+        new("--install-ai-context", (c, a) => AiContext.Install(a, c.Config)),
+        new("--complete", (c, a) => Completion.Run(a, c.ExePath), Hidden: true),
+        // the elevated halves of --link and --unlink; not for people
+        new("--internal-link", (c, a) => WrapperCommands.InternalLink(a, c.ExePath), Hidden: true),
+        new("--internal-unlink", (c, a) => WrapperCommands.InternalUnlink(a, c.ExePath), Hidden: true)
+    ];
+
+    // What "wslbin <Tab>" offers.
+    internal static List<string> OfferedOptions() =>
+        [.. Commands.Where(c => !c.Hidden).Select(c => c.Name), .. RunOptions];
+
+    static int PrintVersion(IList<string> args)
     {
-        /// <summary>Windows paths translated, globs left to bash, everything else escaped.</summary>
-        Smart,
-        /// <summary>Smart, plus Linux variables and command substitutions in arguments that contain $ or `.</summary>
-        Sh,
-        /// <summary>Arguments exactly as typed: nothing translated, nothing expanded.</summary>
-        Raw
+        Options.None(args, "--version");
+        Out.Info($"wslbin {Version}");
+        return 0;
     }
 
-    internal static class ExitCodes
+    internal static int Main(string[] args)
     {
-        // The convention of env, timeout, nice and docker: 125 means the wrapper itself failed.
-        // 126 and 127 (cannot run, not found) come from bash unchanged.
-        public const int Failed = 125;
-        // What a shell reports for a command stopped by Ctrl+C: 128 + SIGINT.
-        public const int Interrupted = 130;
-    }
-
-    /// <summary>What the user asked for, before config and escaping are applied.</summary>
-    internal sealed class Invocation
-    {
-        public string Utility;                 // null in the "wslbin -c" form
-        public string Script;                  // the bash string in the "wslbin -c" form
-        public readonly List<string> Args = new List<string>();
-        public ArgMode? Mode;                  // null: take it from the config
-        public bool Explain;
-    }
-
-    internal static class Program
-    {
-        // The flags of a wrapper copy, in front of the utility's arguments.
-        internal const string RawFlag = "--wslbin-raw";
-        internal const string ShFlag = "--wslbin-sh";
-        internal const string ExplainFlag = "--wslbin-explain";
-        internal static readonly string[] WrapperFlags = { RawFlag, ShFlag, ExplainFlag };
-
-        // The options of "wslbin [--raw | --sh] [--explain] <utility>" and "wslbin -c".
-        internal const string RawOption = "--raw";
-        internal const string ShOption = "--sh";
-        internal const string ExplainOption = "--explain";
-        internal const string ScriptOption = "-c";
-        internal static readonly string[] ModeOptions = { RawOption, ShOption, ExplainOption };
-        internal static readonly string[] RunOptions = { RawOption, ShOption, ExplainOption, ScriptOption };
-
-        // The version is the AssemblyInformationalVersion that the build writes into the program: MAJOR.MINOR
-        // is VersionPrefix in wslbin.csproj, and get-version.ps1 works out the rest (build.ps1 passes it on).
-        internal static readonly string Version =
-            ((AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(
-                Assembly.GetExecutingAssembly(), typeof(AssemblyInformationalVersionAttribute))).InformationalVersion;
-
-        sealed class Command
+        try
         {
-            public string Name;
-            public bool Hidden;                     // not offered by Tab completion: for shells, or for wslbin itself
-            public Func<IList<string>, int> Run;    // gets the arguments after the name
+            return Run(args);
         }
-
-        // wslbin's own commands. Everything else that starts with "-" is an error; a word is a utility.
-        static List<Command> Commands(string exePath)
+        catch (WslbinException ex)
         {
-            Func<Config> config = () => Config.Load(Config.PathFor(exePath), Out.Warn);
-            return new List<Command>
-            {
-                new Command { Name = "--help", Run = a => Help.Run(a, config()) },
-                new Command { Name = "-h", Hidden = true, Run = a => Help.Run(a, config()) },
-                new Command { Name = "-?", Hidden = true, Run = a => Help.Run(a, config()) },
-                new Command { Name = "--version", Run = PrintVersion },
-                new Command { Name = "--link", Run = a => WrapperCommands.Link(a, exePath, config()) },
-                new Command { Name = "--unlink", Run = a => WrapperCommands.Unlink(a, exePath) },
-                new Command { Name = "--list", Run = a => WrapperCommands.List(a, exePath, config()) },
-                new Command { Name = "--doctor", Run = a => Doctor.Run(a, exePath) },
-                new Command { Name = "--init", Run = a => Init.Run(a, exePath) },
-                new Command { Name = "--ai-context", Run = a => AiContext.Print(a, config()) },
-                new Command { Name = "--install-ai-context", Run = a => AiContext.Install(a, config()) },
-                new Command { Name = "--complete", Hidden = true, Run = a => Completion.Run(a, exePath) },
-                // the elevated halves of --link and --unlink; not for people
-                new Command { Name = "--internal-link", Hidden = true, Run = a => WrapperCommands.InternalLink(a, exePath) },
-                new Command { Name = "--internal-unlink", Hidden = true, Run = a => WrapperCommands.InternalUnlink(a, exePath) }
-            };
+            Out.Fail(ex.Message);
+            return ExitCodes.Failed;
         }
-
-        // What "wslbin <Tab>" offers.
-        internal static List<string> OfferedOptions()
+        catch (Exception ex)
         {
-            var names = new List<string>();
-            foreach (Command c in Commands(""))
+            Out.Fail($"internal error: {ex}");
+            return ExitCodes.Failed;
+        }
+    }
+
+    static int Run(string[] args)
+    {
+        // not Assembly.Location: it is empty in a single-file program
+        string exePath = Environment.ProcessPath ?? throw new InvalidOperationException("the path of the running program is unknown");
+        string exeName = Path.GetFileNameWithoutExtension(exePath);
+        var context = new Context(exePath);
+
+        Invocation inv;
+        if (exeName.Equals("wslbin", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length == 0)
             {
-                if (!c.Hidden) names.Add(c.Name);
+                Out.Error(Help.Overview(context.Config).TrimEnd('\n'));
+                return ExitCodes.Failed;
             }
-            names.AddRange(RunOptions);
-            return names;
+            Command? command = Array.Find(Commands, c => c.Name == args[0]);
+            if (command != null) return command.Run(context, args[1..]);
+            inv = ParseCli(args);
+        }
+        else
+        {
+            inv = ParseWrapper(exeName, args);
         }
 
-        static int PrintVersion(IList<string> args)
+        Config cfg = context.Config;
+        string script = BuildScript(inv, cfg);
+        EnvPlan env = EnvPlan.Create(cfg);
+
+        if (inv.Explain)
         {
-            if (args.Count > 0) throw new WslbinException("--version takes no arguments");
-            Out.Info("wslbin " + Version);
+            Out.Info(script);
+            env.Describe();
+            string? problem = Folder.Problem(cfg);
+            if (problem != null) Out.Warn($"{problem} (so this would not run)");
             return 0;
         }
+        // Arguments after "-c <string>" become $0, $1, ... of the bash string, as in "bash -c".
+        IList<string> positional = inv.Script != null ? inv.Args : [];
+        return Launcher.Run(cfg, script, positional, env);
+    }
 
-        internal static int Main(string[] args)
+    // <utility>.exe [--wslbin-*]... [arguments]
+    // The flags are recognised only in front of the arguments; anything else belongs to the utility.
+    static Invocation ParseWrapper(string utility, string[] args)
+    {
+        var inv = new Invocation { Utility = utility };
+        int i = 0;
+        for (; i < args.Length && args[i].StartsWith("--wslbin-", StringComparison.Ordinal); i++)
         {
-            try
+            switch (args[i])
             {
-                return Run(args);
-            }
-            catch (WslbinException ex)
-            {
-                Out.Error("wslbin: " + ex.Message);
-                return ExitCodes.Failed;
-            }
-            catch (Exception ex)
-            {
-                Out.Error("wslbin: internal error: " + ex);
-                return ExitCodes.Failed;
+                case RawFlag: SetMode(inv, ArgMode.Raw); break;
+                case ShFlag: SetMode(inv, ArgMode.Sh); break;
+                case ExplainFlag: inv.Explain = true; break;
+                default:
+                    throw new WslbinException(
+                        $"unknown option {args[i]} (options starting with --wslbin- in front of the arguments are reserved)");
             }
         }
+        inv.Args.AddRange(args[i..]);
+        return inv;
+    }
 
-        static int Run(string[] args)
+    // wslbin [--raw | --sh] [--explain] <utility> [arguments]
+    // wslbin [--explain] -c "<bash string>" [positional parameters]
+    static Invocation ParseCli(string[] args)
+    {
+        var inv = new Invocation();
+        int i = 0;
+        for (; i < args.Length; i++)
         {
-            // not Assembly.Location: it is empty in a single-file program
-            string exePath = Environment.ProcessPath;
-            string exeName = Path.GetFileNameWithoutExtension(exePath);
-            bool isCli = string.Equals(exeName, "wslbin", StringComparison.OrdinalIgnoreCase);
-
-            Invocation inv;
-            if (isCli)
-            {
-                if (args.Length == 0)
-                {
-                    Out.Error(Help.Overview(Config.Load(Config.PathFor(exePath), Out.Warn)).TrimEnd('\n'));
-                    return ExitCodes.Failed;
-                }
-                foreach (Command command in Commands(exePath))
-                {
-                    if (command.Name == args[0]) return command.Run(new List<string>(args).GetRange(1, args.Length - 1));
-                }
-                inv = ParseCli(args);
-            }
-            else
-            {
-                inv = ParseWrapper(exeName, args);
-            }
-
-            Config cfg = Config.Load(Config.PathFor(exePath), Out.Warn);
-            string script = BuildScript(inv, cfg);
-            EnvPlan env = EnvPlan.Create(cfg);
-
-            if (inv.Explain)
-            {
-                Out.Info(script);
-                env.Describe();
-                string problem = Launcher.FolderProblem(cfg);
-                if (problem != null) Out.Warn(problem + " (so this would not run)");
-                return 0;
-            }
-            // Arguments after "-c <string>" become $0, $1, ... of the bash string, as in "bash -c".
-            IList<string> positional = inv.Script != null ? inv.Args : new List<string>();
-            return Launcher.Run(cfg, script, positional, env);
+            if (args[i] == RawOption) SetMode(inv, ArgMode.Raw);
+            else if (args[i] == ShOption) SetMode(inv, ArgMode.Sh);
+            else if (args[i] == ExplainOption) inv.Explain = true;
+            else break;
         }
+        if (i == args.Length)
+            throw new WslbinException("no utility given (see wslbin --help)");
 
-        // <utility>.exe [--wslbin-*]... [arguments]
-        // The flags are recognised only in front of the arguments; anything else belongs to the utility.
-        static Invocation ParseWrapper(string utility, string[] args)
+        if (args[i] == ScriptOption)
         {
-            var inv = new Invocation();
-            inv.Utility = utility;
-            int i = 0;
-            while (i < args.Length && args[i].StartsWith("--wslbin-", StringComparison.Ordinal))
-            {
-                switch (args[i])
-                {
-                    case RawFlag: SetMode(inv, ArgMode.Raw); break;
-                    case ShFlag: SetMode(inv, ArgMode.Sh); break;
-                    case ExplainFlag: inv.Explain = true; break;
-                    default:
-                        throw new WslbinException("unknown option " + args[i] +
-                            " (options starting with --wslbin- in front of the arguments are reserved)");
-                }
-                i++;
-            }
-            for (; i < args.Length; i++) inv.Args.Add(args[i]);
+            if (inv.Mode.HasValue)
+                throw new WslbinException("-c hands the string to bash as it is; --raw and --sh do not apply");
+            if (i + 1 >= args.Length)
+                throw new WslbinException("-c needs a bash string");
+            inv.Script = args[i + 1];
+            inv.Args.AddRange(args[(i + 2)..]);
             return inv;
         }
+        if (args[i].StartsWith('-'))
+            throw new WslbinException($"unknown option {args[i]} (see wslbin --help)");
 
-        // wslbin [--raw | --sh] [--explain] <utility> [arguments]
-        // wslbin [--explain] -c "<bash string>" [positional parameters]
-        static Invocation ParseCli(string[] args)
-        {
-            var inv = new Invocation();
-            int i = 0;
-            for (; i < args.Length; i++)
-            {
-                if (args[i] == RawOption) SetMode(inv, ArgMode.Raw);
-                else if (args[i] == ShOption) SetMode(inv, ArgMode.Sh);
-                else if (args[i] == ExplainOption) inv.Explain = true;
-                else break;
-            }
-            if (i == args.Length)
-                throw new WslbinException("no utility given (see wslbin --help)");
+        inv.Utility = args[i];
+        inv.Args.AddRange(args[(i + 1)..]);
+        return inv;
+    }
 
-            if (args[i] == ScriptOption)
-            {
-                if (inv.Mode.HasValue)
-                    throw new WslbinException("-c hands the string to bash as it is; --raw and --sh do not apply");
-                if (i + 1 >= args.Length)
-                    throw new WslbinException("-c needs a bash string");
-                inv.Script = args[i + 1];
-                for (i += 2; i < args.Length; i++) inv.Args.Add(args[i]);
-                return inv;
-            }
-            if (args[i].StartsWith("-", StringComparison.Ordinal))
-                throw new WslbinException("unknown option " + args[i] + " (see wslbin --help)");
+    static void SetMode(Invocation inv, ArgMode mode)
+    {
+        if (inv.Mode.HasValue && inv.Mode != mode)
+            throw new WslbinException("raw and sh modes cannot be combined");
+        inv.Mode = mode;
+    }
 
-            inv.Utility = args[i];
-            for (i++; i < args.Length; i++) inv.Args.Add(args[i]);
-            return inv;
-        }
+    /// <summary>The bash string that wsl.exe will run.</summary>
+    internal static string BuildScript(Invocation inv, Config cfg)
+    {
+        if (inv.Script != null) return cfg.PathPrefix() + inv.Script;
 
-        static void SetMode(Invocation inv, ArgMode mode)
-        {
-            if (inv.Mode.HasValue && inv.Mode.Value != mode)
-                throw new WslbinException("raw and sh modes cannot be combined");
-            inv.Mode = mode;
-        }
+        string utility = inv.Utility!;
+        ArgMode mode = inv.Mode ?? cfg.ModeFor(utility);
+        // relative paths are translated only where wsl.exe starts the utility in this folder
+        bool relative = Folder.LinuxPath(cfg) != null;
+        IEnumerable<string> words = cfg.DefaultArgsFor(utility).Concat(inv.Args).Select(a => ToWord(mode, a, cfg, relative));
+        return cfg.PathPrefix() + string.Join(' ', words.Prepend(Bash.CommandWord(utility)));
+    }
 
-        /// <summary>The bash string that wsl.exe will run.</summary>
-        internal static string BuildScript(Invocation inv, Config cfg)
-        {
-            if (inv.Script != null) return cfg.PathPrefix() + inv.Script;
-
-            ArgMode mode = inv.Mode.HasValue ? inv.Mode.Value : cfg.ModeFor(inv.Utility);
-            var words = new List<string>();
-            words.Add(Bash.CommandWord(inv.Utility));
-            foreach (string a in cfg.DefaultArgsFor(inv.Utility)) words.Add(Word(mode, a, cfg));
-            foreach (string a in inv.Args) words.Add(Word(mode, a, cfg));
-            return cfg.PathPrefix() + string.Join(" ", words);
-        }
-
-        static string Word(ArgMode mode, string arg, Config cfg)
-        {
-            if (mode == ArgMode.Raw) return Bash.Literal(arg);
-            string translated = Paths.TranslateCommandArg(arg, cfg, Out.Warn);
-            return mode == ArgMode.Sh ? Bash.Sh(translated) : Bash.Smart(translated);
-        }
+    static string ToWord(ArgMode mode, string arg, Config cfg, bool relative)
+    {
+        if (mode == ArgMode.Raw) return Bash.Literal(arg);
+        string translated = Paths.TranslateCommandArg(arg, cfg, Out.Warn, relative);
+        return mode == ArgMode.Sh ? Bash.Sh(translated) : Bash.Smart(translated);
     }
 }

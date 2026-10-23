@@ -1,79 +1,73 @@
 // wslbin: output to the console and to pipes.
 
-using System;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace Wslbin
+namespace Wslbin;
+
+// The console code page (OEM by default) cannot hold every character of an argument. When the
+// output goes to a file or a pipe it is written as UTF-8, which is also what bash reads.
+internal static partial class Out
 {
-    // The console code page (OEM by default) cannot hold every character of an argument. When the
-    // output goes to a file or a pipe it is written as UTF-8, which is also what bash reads.
-    internal static class Out
+    const int StdOutput = -11;
+    const int StdError = -12;
+    const int Chunk = 8192;
+
+    public static void Info(string text) => Write(false, text);
+
+    public static void Error(string text) => Write(true, text);
+
+    /// <summary>A line of wslbin's own on standard error: "wslbin: text".</summary>
+    public static void Fail(string text) => Write(true, $"wslbin: {text}");
+
+    public static void Warn(string text) => Write(true, $"wslbin: warning: {text}");
+
+    // The console is written to in UTF-16, which any code page of the console can show; going
+    // through Console.Out would turn what the code page lacks (Cyrillic under 437) into "?".
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial nint GetStdHandle(int standardHandle);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "WriteConsoleW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool WriteConsole(nint console, string buffer, int length, out int written, nint reserved);
+
+    // Writes the text and a line break to the console; returns what is left when that fails part way
+    // (all of it when there is no console), or null when it is all written.
+    static string? WriteToConsole(bool toError, string text)
     {
-        public static void Info(string text)
+        string line = text.Replace("\r\n", "\n").Replace("\n", "\r\n") + "\r\n";
+        nint handle = GetStdHandle(toError ? StdError : StdOutput);
+        if (handle is 0 or -1) return line;
+        int i = 0;
+        while (i < line.Length)
         {
-            Write(false, text);
+            int length = Math.Min(Chunk, line.Length - i);
+            // a chunk must not end between the two halves of a surrogate pair
+            if (i + length < line.Length && char.IsHighSurrogate(line[i + length - 1])) length--;
+            if (!WriteConsole(handle, line.Substring(i, length), length, out int written, 0) || written <= 0) return line[i..];
+            i += written;
         }
+        return null;
+    }
 
-        public static void Error(string text)
+    static void Write(bool toError, string text)
+    {
+        try
         {
-            Write(true, text);
-        }
-
-        public static void Warn(string text)
-        {
-            Write(true, "wslbin: warning: " + text);
-        }
-
-        // The console is written to in UTF-16, which any code page of the console can show; going
-        // through Console.Out would turn what the code page lacks (Cyrillic under 437) into "?".
-        [DllImport("kernel32.dll", SetLastError = true)]
-        static extern IntPtr GetStdHandle(int standardHandle);
-
-        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-        static extern bool WriteConsoleW(IntPtr console, string buffer, int length, out int written, IntPtr reserved);
-
-        // Writes the text and a line break to the console; returns what is left when that fails part way
-        // (all of it when there is no console), or null when it is all written.
-        static string WriteToConsole(bool toError, string text)
-        {
-            string line = text.Replace("\r\n", "\n").Replace("\n", "\r\n") + "\r\n";
-            IntPtr handle = GetStdHandle(toError ? -12 : -11);
-            if (handle == IntPtr.Zero || handle == new IntPtr(-1)) return line;
-            int i = 0;
-            while (i < line.Length)
+            bool redirected = toError ? Console.IsErrorRedirected : Console.IsOutputRedirected;
+            if (!redirected)
             {
-                int length = Math.Min(8192, line.Length - i);
-                // a chunk must not end between the two halves of a surrogate pair
-                if (i + length < line.Length && char.IsHighSurrogate(line[i + length - 1])) length--;
-                int written;
-                if (!WriteConsoleW(handle, line.Substring(i, length), length, out written, IntPtr.Zero)) return line.Substring(i);
-                i += length;
+                if (WriteToConsole(toError, text) is string rest) (toError ? Console.Error : Console.Out).Write(rest);
+                return;
             }
-            return null;
+            byte[] bytes = Encoding.UTF8.GetBytes(text + "\n");
+            using Stream stream = toError ? Console.OpenStandardError() : Console.OpenStandardOutput();
+            stream.Write(bytes);
+            stream.Flush();
         }
-
-        static void Write(bool toError, string text)
+        catch (IOException)
         {
-            try
-            {
-                bool redirected = toError ? Console.IsErrorRedirected : Console.IsOutputRedirected;
-                if (!redirected)
-                {
-                    string rest = WriteToConsole(toError, text);
-                    if (rest != null) (toError ? Console.Error : Console.Out).Write(rest);
-                    return;
-                }
-                byte[] bytes = new UTF8Encoding(false).GetBytes(text + "\n");
-                Stream stream = toError ? Console.OpenStandardError() : Console.OpenStandardOutput();
-                stream.Write(bytes, 0, bytes.Length);
-                stream.Flush();
-            }
-            catch (IOException)
-            {
-                // the reader has gone (wslbin --list | Select-Object -First 1): there is no one to tell
-            }
+            // the reader has gone (wslbin --list | Select-Object -First 1): there is no one to tell
         }
     }
 }
