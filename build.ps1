@@ -21,7 +21,8 @@ if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir | Out
 $resources = @(
     @('wsl\complete.sh', 'wslbin.wsl.complete.sh'),
     @('shell\wslbin.ps1', 'wslbin.shell.wslbin.ps1'),
-    @('shell\wslbin.lua', 'wslbin.shell.wslbin.lua')
+    @('shell\wslbin.lua', 'wslbin.shell.wslbin.lua'),
+    @('data\native-versions.txt', 'wslbin.data.native-versions.txt')
 )
 $arguments = @('/nologo', '/optimize+', '/target:exe', "/out:$Output")
 foreach ($r in $resources) {

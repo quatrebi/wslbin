@@ -16,6 +16,7 @@
 //   Wrappers.cs         Wrappers (copies of wslbin.exe named after utilities), SearchPath (the PATH of
 //                       Windows), Conflicts (names that Windows already uses), Elevation (administrator rights)
 //   WrapperCommands.cs  WrapperCommands: --link, --unlink, --list; Apt: installing a utility that WSL lacks
+//   NativeVersions.cs   NativeVersions: utilities that have a Windows version of their own (data/native-versions.txt)
 //   Doctor.cs           Doctor: --doctor
 //   Help.cs             Resources: texts built into the .exe (build.ps1)
 //   Completion.cs       Completion: --complete, Tab completion for the shells

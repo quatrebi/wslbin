@@ -290,6 +290,42 @@ Describe 'creating, refreshing and removing wrappers' {
     }
 }
 
+Describe 'utilities that have a Windows version of their own' {
+    It 'keeps data/native-versions.txt in shape: a wrapper name and a winget id a line, each name once, UTF-8 with LF' {
+        $file = Join-Path (Split-Path -Parent $PSScriptRoot) 'data\native-versions.txt'
+        $bytes = [IO.File]::ReadAllBytes($file)
+        ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB) | Should -BeFalse
+        [Array]::IndexOf($bytes, [byte]13) | Should -Be -1
+        $names = @()
+        foreach ($line in [Text.Encoding]::UTF8.GetString($bytes).Split("`n")) {
+            if ($line.Trim() -eq '' -or $line.StartsWith('#')) { continue }
+            $line | Should -Match '^[A-Za-z0-9][A-Za-z0-9._+-]* +[A-Za-z0-9][A-Za-z0-9._+-]*\.[A-Za-z0-9._+-]+$'
+            $names += ($line -split ' +')[0]
+        }
+        $names.Count | Should -BeGreaterThan 40
+        @($names | Group-Object | Where-Object Count -gt 1).Count | Should -Be 0
+    }
+
+    It '--doctor names the winget package for such a wrapper, and nothing for the others' {
+        $h = New-WslbinHome
+        $null = Invoke-Wslbin -Name 'wslbin' -Dir $h -Env @{ PATH = (Get-IsolatedPath $h) } -Arguments @('--internal-link', 'jq', 'rsync')
+        $r = Invoke-Wslbin -Name 'wslbin' -Dir $h -Env @{ PATH = (Get-IsolatedPath $h) } -Arguments @('--doctor')
+        $r.Out | Should -Match ([regex]::Escape('[info] jq has a Windows version of its own, which starts faster and needs no WSL: winget install --exact --id jqlang.jq'))
+        $r.Out | Should -Not -Match '\[info\] rsync'
+    }
+
+    It '--doctor does not suggest a Windows version that is installed already: that is a conflict' {
+        $h = New-WslbinHome
+        $null = Invoke-Wslbin -Name 'wslbin' -Dir $h -Env @{ PATH = (Get-IsolatedPath $h) } -Arguments @('--internal-link', 'jq')
+        $other = Join-Path $global:WslbinTest.Work ('native-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $other | Out-Null
+        Copy-Item "$env:SystemRoot\System32\whoami.exe" (Join-Path $other 'jq.exe')
+        $r = Invoke-Wslbin -Name 'wslbin' -Dir $h -Env @{ PATH = "$h;$other;$env:SystemRoot\System32" } -Arguments @('--doctor')
+        $r.Out | Should -Not -Match '\[info\] jq'
+        $r.Out | Should -Match 'jq: .*conflict: Windows already has'
+    }
+}
+
 Describe 'with real WSL' -Tag 'WSL' -Skip:$NoWsl {
     BeforeEach {
         $script:H = New-WslbinHome

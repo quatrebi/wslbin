@@ -12,6 +12,7 @@ namespace Wslbin
         public const string CompleteScript = "wslbin.wsl.complete.sh";
         public const string PowerShellInit = "wslbin.shell.wslbin.ps1";
         public const string ClinkInit = "wslbin.shell.wslbin.lua";
+        public const string NativeVersions = "wslbin.data.native-versions.txt";
 
         public static string Text(string name)
         {

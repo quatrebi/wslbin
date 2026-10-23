@@ -19,6 +19,8 @@ namespace Wslbin
             public void Warn(string text) { Warnings++; Out.Info("[warn] " + text); }
             public void Fail(string text) { Failures++; Out.Info("[FAIL] " + text); }
             public void Hint(string text) { Out.Info("       " + text); }
+            // advice, not a problem: it changes neither the counts nor the exit code
+            public void Info(string text) { Out.Info("[info] " + text); }
         }
 
         public static int Run(IList<string> args, string exePath)
@@ -215,6 +217,15 @@ namespace Wslbin
             // "all fine" would claim that the utilities are in WSL, which nobody could check
             if (bad == 0 && present == null) report.Ok(wrappers.Count + " wrapper(s), not checked in WSL: " + string.Join(", ", wrappers));
             else if (bad == 0) report.Ok(wrappers.Count + " wrapper(s), all fine: " + string.Join(", ", wrappers));
+
+            // A Windows version that is installed already clashes with the wrapper, and that is reported above.
+            Dictionary<string, string> native = NativeVersions.Load();
+            foreach (string n in wrappers)
+            {
+                string package;
+                if (!native.TryGetValue(n, out package) || Conflicts.Hard(n, dir) != null) continue;
+                report.Info(n + " has a Windows version of its own, which starts faster and needs no WSL: winget install --exact --id " + package);
+            }
         }
     }
 }

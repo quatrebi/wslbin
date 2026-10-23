@@ -1,0 +1,59 @@
+# Utilities that have a version of their own for Windows, and the winget package that installs it.
+# wslbin --doctor names the package for a wrapper of such a utility: the Windows version starts faster
+# and needs no WSL, though the one from WSL works too. One line each: <utility> <winget package id>.
+# Every id was checked with "winget show --id <id> --exact" (2026-10-21). Utilities that Windows has
+# built in (curl, tar, ssh, scp, sort, find) are left out: a wrapper with such a name is refused anyway.
+
+7z          7zip.7zip
+age         FiloSottile.age
+aws         Amazon.AWSCLI
+az          Microsoft.AzureCLI
+bat         sharkdp.bat
+btop        aristocratos.btop4win
+cargo       Rustlang.Rustup
+cmake       Kitware.CMake
+delta       dandavison.delta
+dig         ISC.Bind
+docker      Docker.DockerCLI
+dust        bootandy.dust
+eza         eza-community.eza
+fd          sharkdp.fd
+ffmpeg      Gyan.FFmpeg
+ffprobe     Gyan.FFmpeg
+fzf         junegunn.fzf
+gh          GitHub.cli
+git         Git.Git
+go          GoLang.Go
+gofmt       GoLang.Go
+gpg         GnuPG.GnuPG
+helm        Helm.Helm
+hyperfine   sharkdp.hyperfine
+jq          jqlang.jq
+just        Casey.Just
+kubectl     Kubernetes.kubectl
+less        jftuga.less
+magick      ImageMagick.ImageMagick
+make        ezwinports.make
+nano        GNU.Nano
+ninja       Ninja-build.Ninja
+nmap        Insecure.Nmap
+node        OpenJS.NodeJS.LTS
+npm         OpenJS.NodeJS.LTS
+npx         OpenJS.NodeJS.LTS
+nvim        Neovim.Neovim
+openssl     ShiningLight.OpenSSL.Light
+pnpm        pnpm.pnpm
+rg          BurntSushi.ripgrep.MSVC
+rustc       Rustlang.Rustup
+rustup      Rustlang.Rustup
+sd          chmln.sd
+sqlite3     SQLite.SQLite
+starship    Starship.Starship
+terraform   Hashicorp.Terraform
+tokei       XAMPPRocky.Tokei
+uv          astral-sh.uv
+vim         vim.vim
+wget        JernejSimoncic.Wget
+yq          MikeFarah.yq
+zoxide      ajeetdsouza.zoxide
+zstd        Meta.Zstandard
