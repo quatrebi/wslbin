@@ -31,6 +31,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Test-SemVer: the one definition of a version (-Scope Local and no -Force, so that a caller that has the
+# module loaded keeps it)
+Import-Module (Join-Path $PSScriptRoot '..\Wslbin.Version.psm1') -DisableNameChecking -Scope Local
 
 function Get-AssetText {
     param([string]$Url)
@@ -65,8 +68,9 @@ $found = New-Object System.Collections.Generic.List[object]
 foreach ($release in $releases) {
     $tag = [string]$release.tag_name
     if ($release.draft -or $release.prerelease) { continue }
-    if ($tag -notmatch '^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))\z') { continue }
-    $version = $Matches[1]
+    # a stable version: SemVer 2.0 with nothing after PATCH
+    $version = $(if ($tag.StartsWith('v')) { $tag.Substring(1) } else { '' })
+    if (-not (Test-SemVer $version) -or $version.Contains('-') -or $version.Contains('+')) { continue }
     $zipName = "wslbin-$version-win-x64.zip"
     $assets = @($release.assets)
     $zip = $assets | Where-Object { $_.name -ceq $zipName } | Select-Object -First 1

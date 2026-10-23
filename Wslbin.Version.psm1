@@ -3,8 +3,10 @@
 # of it (parameters, $ErrorActionPreference) leaks into the scope of whoever uses it.
 # Works in Windows PowerShell 5.1 and PowerShell 7.
 
-# the official regular expression of semver.org (2.0.0)
-$script:SemVerPattern = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?\z'
+# the regular expression of semver.org (2.0.0), with [0-9] for \d (which in .NET takes the digits of
+# every script); the same line is in setup\common.ps1 and site\install.ps1, which cannot import this
+# module (they are in the package and on the site), and a test sees that the three are the same
+$script:SemVerPattern = '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?\z'
 
 function Test-SemVer {
     param([string]$Version)
@@ -130,8 +132,8 @@ function Get-WslbinVersion {
     # --topo-order: "oldest" is the one furthest up the history, not the one with the oldest date (a clock
     # that was wrong); the other options keep the git configuration of the person out of the output
     $found = Invoke-Git $Repo @('-c', 'log.follow=false', 'log', '--reverse', '--topo-order', '--no-show-signature', '--format=%H', "-G$pattern", $full.Out, '--', 'wslbin.csproj')
-    $base = ($found.Out -split "`n")[0]
     if ($found.Code -ne 0) { throw "git log failed in ${Repo}: $($found.Err)" }
+    $base = ($found.Out -split "`n")[0]
     if (-not $base) {
         if (-not $fromTree) {
             throw "wslbin.csproj with MAJOR.MINOR $majorMinor is not committed yet: PATCH is counted from the commit that sets it."
