@@ -280,6 +280,25 @@ Describe 'wslbin --init clink' {
         $r.Err | Should -Match '--dir needs a folder'
     }
 
+    It 'asks "clink info" for the folder through the cmd.exe of Windows, never one in the current folder' {
+        $root = Join-Path $global:WslbinTest.Work ('clink-' + [guid]::NewGuid().ToString('N'))
+        $cwd = Join-Path $root 'cwd'
+        $bin = Join-Path $root 'bin'
+        $target = Join-Path $root 'state'
+        New-Item -ItemType Directory -Path $cwd, $bin, $target | Out-Null
+        # a cmd.exe planted in the folder the user is in: it only leaves a mark that it ran
+        $source = Join-Path $root 'planted.cs'
+        Set-Content -LiteralPath $source -Value 'class P { static void Main() { System.IO.File.WriteAllText(System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "ran.txt"), ""); } }'
+        $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+        & $csc /nologo "/out:$(Join-Path $cwd 'cmd.exe')" $source | Out-Null
+        Set-Content -LiteralPath (Join-Path $bin 'clink.cmd') -Value "@echo state : $target"
+        $vars = @{ PATH = "$bin;$env:SystemRoot\System32"; PATHEXT = '.COM;.EXE;.BAT;.CMD'; LOCALAPPDATA = (Join-Path $root 'no-local-app-data') }
+        $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--init', 'clink') -WorkingDirectory $cwd -Env $vars
+        Test-Path (Join-Path $cwd 'ran.txt') | Should -BeFalse -Because 'the cmd.exe in the current folder must not run'
+        $r.ExitCode | Should -Be 0 -Because $r.Err
+        Test-Path (Join-Path $target 'wslbin.lua') | Should -BeTrue
+    }
+
     It 'leaves a wslbin.lua alone that it did not write, and replaces its own' {
         $target = Join-Path $global:WslbinTest.Work ('clink-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $target | Out-Null
