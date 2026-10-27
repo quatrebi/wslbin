@@ -11,10 +11,10 @@
     }
 
     A release is taken only when it is not a draft, not a pre-release, its tag is v<MAJOR>.<MINOR>.<PATCH>
-    and nothing else, and it has the asset wslbin-<version>-win-x64.zip and a SHA256 for it: the digest
-    that GitHub shows on the asset, or else the first 64 hex digits of the text of the asset
-    wslbin-<version>-win-x64.zip.sha256. A release without one of these is skipped with a warning and
-    leaves no trace in the file. The versions are sorted by SemVer, highest first; "latest" is the first.
+    and nothing else, and it has the asset wslbin-<version>-win-x64.zip and its SHA256 in the asset
+    wslbin-<version>-win-x64.zip.sha256 (the first 64 hex digits of its text), which the release job wrote;
+    when GitHub shows a digest of the zip, it must be that SHA256 (otherwise the zip was replaced after the
+    release). A release without these is skipped with a warning and leaves no trace in the file. The versions are sorted by SemVer, highest first; "latest" is the first.
 
     Without -InputFile the list comes from GitHub (the gh program and GH_TOKEN, which a workflow has).
     -InputFile is for the tests: a JSON array of releases in the shape of the API; only with it an address
@@ -77,19 +77,24 @@ foreach ($release in $releases) {
     if (-not $zip) { Write-Warning "$tag is skipped: it has no asset $zipName."; continue }
     if ([string]$zip.browser_download_url -notmatch '^https://') { Write-Warning "$tag is skipped: the address of $zipName is not https."; continue }
 
+    # Two records of the hash: the .sha256 file that the release job wrote when it made the zip, and the
+    # digest that GitHub computes of the asset as it is now. Both must be there and agree, so that a zip
+    # that was replaced after the release (by anything that may write to the repository) is not published
+    # with the hash of the replacement.
     $hash = $null
-    $digest = $zip.PSObject.Properties['digest']
-    if ($digest -and [string]$digest.Value -match '^sha256:([0-9a-fA-F]{64})\z') { $hash = $Matches[1].ToLowerInvariant() }
-    if (-not $hash) {
-        $sums = $assets | Where-Object { $_.name -ceq "$zipName.sha256" } | Select-Object -First 1
-        if ($sums) {
-            try {
-                if ((Get-AssetText ([string]$sums.browser_download_url)) -match '(?m)^\s*([0-9a-fA-F]{64})\b') { $hash = $Matches[1].ToLowerInvariant() }
-            }
-            catch { Write-Warning "$tag is skipped: the hash could not be read ($($_.Exception.Message))."; continue }
+    $sums = $assets | Where-Object { $_.name -ceq "$zipName.sha256" } | Select-Object -First 1
+    if ($sums) {
+        try {
+            if ((Get-AssetText ([string]$sums.browser_download_url)) -match '(?m)^\s*([0-9a-fA-F]{64})\b') { $hash = $Matches[1].ToLowerInvariant() }
         }
+        catch { Write-Warning "$tag is skipped: the hash could not be read ($($_.Exception.Message))."; continue }
     }
-    if (-not $hash) { Write-Warning "$tag is skipped: no SHA256 of $zipName was found."; continue }
+    if (-not $hash) { Write-Warning "$tag is skipped: it has no $zipName.sha256 with a SHA256 in it."; continue }
+    $digest = $zip.PSObject.Properties['digest']
+    if ($digest -and [string]$digest.Value) {
+        if ([string]$digest.Value -notmatch '^sha256:([0-9a-fA-F]{64})\z') { Write-Warning "$tag is skipped: the digest of $zipName is not a SHA256 ($($digest.Value))."; continue }
+        if ($Matches[1].ToLowerInvariant() -ne $hash) { Write-Warning "$tag is skipped: $zipName is not the file that was released (its digest is $($Matches[1].ToLowerInvariant()), its .sha256 says $hash)."; continue }
+    }
 
     # PowerShell 7 turns the date of the API into a DateTime, and a string of that would be in the culture of the machine
     $published = $release.published_at

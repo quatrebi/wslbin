@@ -114,13 +114,22 @@ Describe 'new-releases-json.ps1' {
             $r
         }
 
-        # a hash that is only in the asset "<zip>.sha256", which the script has to read
-        $script:ShaFile = Join-Path $script:Work 'wslbin-0.1.10-win-x64.zip.sha256'
-        [IO.File]::WriteAllText($script:ShaFile, "$($script:Hash.b.ToUpperInvariant())  wslbin-0.1.10-win-x64.zip`n", [Text.UTF8Encoding]::new($false))
+        # the asset "<zip>.sha256" that the release job writes, which the script has to read (file:/// with -InputFile)
+        function New-ShaAsset([string]$Version, [string]$Hash) {
+            $name = "wslbin-$Version-win-x64.zip.sha256"
+            $path = Join-Path $script:Work ('sha-' + [guid]::NewGuid().ToString('N') + '-' + $name)
+            [IO.File]::WriteAllText($path, "$Hash  wslbin-$Version-win-x64.zip`n", [Text.UTF8Encoding]::new($false))
+            New-FakeAsset $name -Url ([Uri]$path).AbsoluteUri
+        }
 
         $script:Mixed = @(
-            (New-FakeRelease 'v0.1.3' -Assets @((New-FakeAsset 'wslbin-0.1.3-win-x64.zip' -Digest "sha256:$($script:Hash.a)")))
-            (New-FakeRelease 'v0.1.10' -Assets @((New-FakeAsset 'wslbin-0.1.10-win-x64.zip'), (New-FakeAsset 'wslbin-0.1.10-win-x64.zip.sha256' -Url ([Uri]$script:ShaFile).AbsoluteUri)))
+            (New-FakeRelease 'v0.1.3' -Assets @((New-FakeAsset 'wslbin-0.1.3-win-x64.zip' -Digest "sha256:$($script:Hash.a)"), (New-ShaAsset '0.1.3' $script:Hash.a)))
+            # GitHub showed no digest for assets before 2025: the .sha256 alone
+            (New-FakeRelease 'v0.1.10' -Assets @((New-FakeAsset 'wslbin-0.1.10-win-x64.zip'), (New-ShaAsset '0.1.10' $script:Hash.b.ToUpperInvariant())))
+            # a zip that was replaced after the release: GitHub's digest is that of the new file
+            (New-FakeRelease 'v0.1.8' -Assets @((New-FakeAsset 'wslbin-0.1.8-win-x64.zip' -Digest "sha256:$($script:Hash.c)"), (New-ShaAsset '0.1.8' $script:Hash.d)))
+            # a digest and no .sha256 that the release job would have written
+            (New-FakeRelease 'v0.1.9' -Assets @((New-FakeAsset 'wslbin-0.1.9-win-x64.zip' -Digest "sha256:$($script:Hash.c)")))
             (New-FakeRelease 'v0.2.0-rc.1' -Prerelease $true -Assets @((New-FakeAsset 'wslbin-0.2.0-rc.1-win-x64.zip' -Digest "sha256:$($script:Hash.c)")))
             (New-FakeRelease 'v0.1.4' -Draft $true -Assets @((New-FakeAsset 'wslbin-0.1.4-win-x64.zip' -Digest "sha256:$($script:Hash.c)")))
             (New-FakeRelease 'v0.1.5' -Assets @((New-FakeAsset 'something-else.zip' -Digest "sha256:$($script:Hash.c)")))
@@ -161,7 +170,12 @@ Describe 'new-releases-json.ps1' {
         $text = $script:Run.Out + "`n" + $script:Run.Err
         $text | Should -Match 'v0\.1\.5'
         $text | Should -Match 'v0\.1\.6'
-        (Get-Content -Raw $script:Run.Output) | Should -Not -Match 'calc|x\.y\.z|0\.2\.0|0\.1\.4|0\.1\.5|0\.1\.6|0\.1\.7'
+        (Get-Content -Raw $script:Run.Output) | Should -Not -Match 'calc|x\.y\.z|0\.2\.0|0\.1\.4|0\.1\.5|0\.1\.6|0\.1\.7|0\.1\.8|0\.1\.9'
+    }
+    It 'skips a release whose zip is not the file that the release job hashed, or that lacks that hash' {
+        $text = ($script:Run.Out + "`n" + $script:Run.Err) -replace '\s+', ' '
+        $text | Should -Match 'v0\.1\.8 is skipped: wslbin-0\.1\.8-win-x64\.zip is not the file that was released'
+        $text | Should -Match 'v0\.1\.9 is skipped: it has no wslbin-0\.1\.9-win-x64\.zip\.sha256'
     }
     It 'gives an empty list and no latest when there is no release' {
         $r = Invoke-ReleasesScript -Releases @()
@@ -184,7 +198,7 @@ Describe 'new-releases-json.ps1' {
     }
     It 'reads a list that holds one release, in both shells' -ForEach @('pwsh', 'winps') {
         $exe = if ($_ -eq 'winps') { Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe' } else { '' }
-        $one = New-FakeRelease 'v1.0.0' -Assets @((New-FakeAsset 'wslbin-1.0.0-win-x64.zip' -Digest "sha256:$($script:Hash.d)"))
+        $one = New-FakeRelease 'v1.0.0' -Assets @((New-FakeAsset 'wslbin-1.0.0-win-x64.zip' -Digest "sha256:$($script:Hash.d)"), (New-ShaAsset '1.0.0' $script:Hash.d))
         $r = Invoke-ReleasesScript -Releases @($one) -Exe $exe
         $r.ExitCode | Should -Be 0 -Because $r.Err
         $r.Json.latest | Should -BeExactly '1.0.0'

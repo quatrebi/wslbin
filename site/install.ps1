@@ -62,11 +62,16 @@
     # another place than the zip, and must not be able to point anywhere else.
     function Test-Download([string]$Url, [string]$Asset) {
         if ($Asset -cne "wslbin-$Version-win-x64.zip") { throw "releases.json names the file '$Asset' for $Version, not wslbin-$Version-win-x64.zip." }
-        if ($LocalReleases -and $Url -notmatch '^https://') { return }
+        if (Test-LocalFile $Url) { return }
         $expected = "https://github.com/$Repository/releases/download/v$Version/$Asset"
         if (-not [string]::Equals($Url, $expected, [StringComparison]::OrdinalIgnoreCase)) {
             throw "The address of the zip is not the download of release v$Version of $Repository on GitHub ($expected): $Url"
         }
+    }
+
+    # A zip that is a file on this machine: only with -LocalReleases (for the tests), and never an address.
+    function Test-LocalFile([string]$Url) {
+        $LocalReleases -and $Url -notmatch '://'
     }
 
     function Get-Releases {
@@ -88,7 +93,7 @@
 
     # The file of a release into $Path, with a progress bar. A local file (only with -LocalReleases) is copied.
     function Get-Zip([string]$Url, [string]$Path, [string]$Name) {
-        if ($LocalReleases -and $Url -notmatch '^https://') {
+        if (Test-LocalFile $Url) {
             Copy-Item -LiteralPath $Url -Destination $Path
             return
         }
@@ -225,12 +230,15 @@
         # questions, only where nobody said and somebody can answer
         if (-not $Quiet -and (Test-Interactive)) {
             if (-not $Scope) {
-                # an update goes into the scope that is installed: the other one would be a second copy
+                # an update goes into the scope that is installed: the other one would be a second copy,
+                # so that is what Enter chooses (the installer does the same when nobody is asked)
+                $default = 0
                 foreach ($installed in @(Get-Installed)) {
                     $whom = $(if ($installed.Scope -eq 'AllUsers') { 'all users' } else { 'the current user' })
                     Write-Say "wslbin $($installed.Version) is installed for $whom in $($installed.Location): choose that to update it (of two installations, the one for all users is the one that runs)"
+                    if ($installed.Scope -eq 'AllUsers') { $default = 1 }
                 }
-                $answer = Read-Choice 'wslbin' 'Install for whom?' @('&Current user (no administrator rights)', '&All users (asks for administrator rights)') 0
+                $answer = Read-Choice 'wslbin' 'Install for whom?' @('&Current user (no administrator rights)', '&All users (asks for administrator rights)') $default
                 $Scope = @('CurrentUser', 'AllUsers')[$answer]
             }
             if ($Completion.Count -eq 0) {
@@ -254,7 +262,9 @@
         if ($VerifyAttestation) {
             $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $gh) { throw '-VerifyAttestation needs the gh program (https://cli.github.com), and it is not installed.' }
-            & $gh.Source attestation verify $zipPath --repo $Repository
+            # made by the release workflow of that repository, from its main branch: not by any workflow
+            # that can write to the repository
+            & $gh.Source attestation verify $zipPath --repo $Repository --signer-workflow "$Repository/.github/workflows/release.yml" --source-ref 'refs/heads/main'
             if ($LASTEXITCODE -ne 0) { throw "gh attestation verify failed (exit code $LASTEXITCODE): the zip is not proven to come from $Repository. Nothing was installed." }
             Write-Say "attestation of $Repository verified"
         }
@@ -278,7 +288,8 @@
         $exitCode = Invoke-Setup $setup $arguments
     }
     catch {
-        Write-Error "wslbin: $($_.Exception.Message)" -ErrorAction Continue
+        # (an error record would show the whole text of this script block as the place of the error)
+        $Host.UI.WriteErrorLine("wslbin: $($_.Exception.Message)")
         $exitCode = 2
     }
     finally {
