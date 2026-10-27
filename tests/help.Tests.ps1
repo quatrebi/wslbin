@@ -150,8 +150,20 @@ Describe 'the texts in docs/' {
 
 Describe 'the READMEs' {
     BeforeAll {
+        # The parameters of a script: of its param block, or (the loader, which is one script block,
+        # & { param(...) ... } @args, so that iex leaves nothing behind) of the block it runs.
+        function Get-ScriptParameters([string]$path) {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$null)
+            $block = $ast.ParamBlock
+            if (-not $block) {
+                $inner = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.ScriptBlockExpressionAst] }, $false)
+                if ($inner) { $block = $inner.ScriptBlock.ParamBlock }
+            }
+            if ($block) { $block.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath } }
+        }
         # the README names the loader of the site and the scripts of the package: any of their parameters will do
-        $script:InstallParameters = @('site\install.ps1', 'setup\install.ps1', 'setup\uninstall.ps1' | ForEach-Object { (Get-Command (Join-Path $script:Repo $_)).Parameters.Keys } | Sort-Object -Unique)
+        $script:InstallParameters = @('site\install.ps1', 'setup\install.ps1', 'setup\uninstall.ps1' | ForEach-Object { Get-ScriptParameters (Join-Path $script:Repo $_) } | Sort-Object -Unique)
+        $script:InstallParameters.Count | Should -BeGreaterThan 10
         function Read-Readme([string]$name) { [IO.File]::ReadAllText((Join-Path $script:Repo $name), [Text.UTF8Encoding]::new($false)).Replace("`r`n", "`n") }
         function Get-WslbinOptions([string]$text) {
             [regex]::Matches($text, 'wslbin (--[a-z][a-z-]*)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
@@ -277,6 +289,54 @@ Describe 'wslbin --install-ai-context' {
         $null = Install-Context @('--claude-dir', $c, '--claude')
         $b = [IO.File]::ReadAllBytes((Join-Path $c 'CLAUDE.md'))
         ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) | Should -BeTrue
+    }
+
+    It 'writes through a symbolic link: the link stays, the file it points to gets the block' {
+        $c = New-AgentHome
+        $dotfiles = New-AgentHome
+        $real = Join-Path $dotfiles 'CLAUDE.md'
+        [IO.File]::WriteAllText($real, "# Mine`n", [Text.UTF8Encoding]::new($false))
+        $link = Join-Path $c 'CLAUDE.md'
+        try { New-Item -ItemType SymbolicLink -Path $link -Target $real -ErrorAction Stop | Out-Null }
+        catch { Set-ItResult -Skipped -Because 'this account may not make symbolic links (Developer Mode is off)'; return }
+        $r = Install-Context @('--claude-dir', $c, '--claude')
+        $r.ExitCode | Should -Be 0 -Because $r.Err
+        (Get-Item $link).LinkType | Should -BeExactly 'SymbolicLink'
+        Get-Content -Raw $real | Should -Match '<!-- wslbin:begin'
+        $r = Install-Context @('--claude-dir', $c, '--claude', '--remove')
+        $r.ExitCode | Should -Be 0 -Because $r.Err
+        (Get-Item $link).LinkType | Should -BeExactly 'SymbolicLink'
+        Get-Content -Raw $real | Should -Not -Match 'wslbin'
+        @(Get-ChildItem $c -Filter '*.tmp' -Force).Count + @(Get-ChildItem $dotfiles -Filter '*.tmp' -Force).Count | Should -Be 0
+    }
+
+    It 'leaves a read-only file as it is, says so in one line, and still does the other agent' {
+        $c = New-AgentHome; $x = New-AgentHome
+        $path = Join-Path $c 'CLAUDE.md'
+        [IO.File]::WriteAllText($path, "# Mine`n", [Text.UTF8Encoding]::new($false))
+        (Get-Item $path).IsReadOnly = $true
+        try {
+            $r = Install-Context @('--claude-dir', $c, '--codex-dir', $x)
+        }
+        finally { (Get-Item $path).IsReadOnly = $false }
+        $r.ExitCode | Should -Be 125
+        $r.Err | Should -Match 'Claude Code: .*CLAUDE\.md is read-only'
+        $r.Err | Should -Not -Match 'internal error|   at '
+        # nothing claims a change that was not made
+        $r.Out | Should -Not -Match 'added the wslbin block'
+        [IO.File]::ReadAllText($path) | Should -BeExactly "# Mine`n"
+        Get-Content -Raw (Join-Path $x 'AGENTS.md') | Should -Match '<!-- wslbin:begin'
+        @(Get-ChildItem $c -Filter '*.tmp' -Force).Count | Should -Be 0
+    }
+
+    It 'keeps the attributes of the file it changes' {
+        $c = New-AgentHome
+        $path = Join-Path $c 'CLAUDE.md'
+        [IO.File]::WriteAllText($path, "# Mine`n", [Text.UTF8Encoding]::new($false))
+        (Get-Item $path -Force).Attributes = 'Hidden'
+        $r = Install-Context @('--claude-dir', $c, '--claude')
+        $r.ExitCode | Should -Be 0 -Because $r.Err
+        (Get-Item $path -Force).Attributes.HasFlag([IO.FileAttributes]::Hidden) | Should -BeTrue
     }
 
     It 'replaces its own block in place when the text has changed, and touches nothing else' {

@@ -106,6 +106,24 @@ Describe 'messages of wsl.exe' {
         (Invoke-Fake -Wsl $wsl -Arguments @('--doctor')).Out | Should -Match ([regex]::Escape('[ ok ] distributions: Ubuntu-24.04 (default), docker-desktop'))
     }
 
+    It '--doctor fails when WSL mounts the drives elsewhere than /mnt/, which wslbin writes paths as, and says how to fix it' {
+        $list = ConvertTo-Utf16 ("  NAME              STATE           VERSION`r`n* Ubuntu-24.04      Running         2`r`n")
+        # (every bash call of the stand-in answers the same; only the marked line is the answer of wslpath)
+        $wsl = New-FakeWsl -Files @{ 'list.out' = $list; 'run.out' = "5.2.21(1)-release`nwslbin-mount:/c/`n" }
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--doctor')
+        $r.ExitCode | Should -Be 125
+        $r.Out | Should -Match ([regex]::Escape('[FAIL] WSL mounts drive C: at /c/, but wslbin writes Windows paths as /mnt/c/'))
+        $r.Out | Should -Match ([regex]::Escape('fix: set root = /mnt/ under [automount] in /etc/wsl.conf'))
+    }
+
+    It '--doctor is content with drives at /mnt/, and says nothing of them when wslpath gives no answer' {
+        $list = ConvertTo-Utf16 ("  NAME              STATE           VERSION`r`n* Ubuntu-24.04      Running         2`r`n")
+        $wsl = New-FakeWsl -Files @{ 'list.out' = $list; 'run.out' = "5.2.21(1)-release`nwslbin-mount:/mnt/c/`n" }
+        (Invoke-Fake -Wsl $wsl -Arguments @('--doctor')).Out | Should -Match ([regex]::Escape('[ ok ] drives are mounted at /mnt/'))
+        $wsl = New-FakeWsl -Files @{ 'list.out' = $list; 'run.out' = "5.2.21(1)-release`n" }
+        (Invoke-Fake -Wsl $wsl -Arguments @('--doctor')).Out | Should -Not -Match 'mount'
+    }
+
     It 'shows a message in another language as it is (wsl.exe writes UTF-16)' {
         # "Нет дистрибутива с указанным именем." and "Код ошибки"
         $text = (-join [char[]](0x41D, 0x435, 0x442, 0x20, 0x434, 0x438, 0x441, 0x442, 0x440, 0x438, 0x431, 0x443, 0x442, 0x438, 0x432, 0x430)) + '.'
@@ -187,14 +205,28 @@ Describe 'a wsl.exe that does not answer, or a wrapper that is stopped' {
     It '--link gives up on a wsl.exe that has ended but whose output a left-behind process holds open' {
         $wsl = New-FakeWsl -Files @{ 'run.out' = "ok jq`n"; 'run.hold' = '61' }
         $wsl.WSLBIN_TEST_QUERY_TIMEOUT_MS = '3000'
-        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $dir = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        Copy-Item $global:WslbinTest.FakeExe (Join-Path $dir 'wslbin.exe')
+        # Not Invoke-Wslbin: the process left behind inherits the pipes of wslbin too, and a test that
+        # read them to their end would wait for it. Files do not wait; the exit of wslbin is what counts.
+        $saved = @{}
+        foreach ($key in @($wsl.Keys) + 'WSLBIN_NO_ELEVATION') { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
         try {
-            $r = Invoke-Fake -Wsl $wsl -Arguments @('--link', '--dry-run', 'jq')
+            foreach ($key in $wsl.Keys) { [Environment]::SetEnvironmentVariable($key, $wsl[$key]) }
+            $env:WSLBIN_NO_ELEVATION = '1'
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $p = Start-Process -FilePath (Join-Path $dir 'wslbin.exe') -ArgumentList '--link', '--dry-run', 'jq' -NoNewWindow -PassThru `
+                -RedirectStandardOutput (Join-Path $dir 'out.txt') -RedirectStandardError (Join-Path $dir 'err.txt')
+            $p.WaitForExit(60000) | Should -BeTrue
             $watch.Elapsed.TotalSeconds | Should -BeLessThan 30
-            $r.ExitCode | Should -Be 125
-            $r.Err | Should -Match 'did not answer within 3 seconds'
+            $p.ExitCode | Should -Be 125
+            Get-Content -Raw (Join-Path $dir 'err.txt') | Should -Match 'did not answer within 3 seconds'
         }
         finally {
+            foreach ($key in $saved.Keys) {
+                if ($null -eq $saved[$key]) { Remove-Item "Env:\$key" -ErrorAction SilentlyContinue } else { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
+            }
             $holdPid = Join-Path $wsl.FAKE_WSL_DIR 'hold.pid'
             if (Test-Path $holdPid) { Stop-Process -Id ([int](Get-Content $holdPid)) -Force -ErrorAction SilentlyContinue }
         }

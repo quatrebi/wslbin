@@ -118,6 +118,7 @@ internal static class Doctor
             return false;
         }
         report.Ok($"bash {version} starts");
+        CheckMountRoot(report, cfg);
 
         WslResult completion = WslQuery.RunBash(cfg, "[ -r /usr/share/bash-completion/bash_completion ] && echo yes || echo no");
         if (completion.Output.Trim() == "yes")
@@ -142,6 +143,27 @@ internal static class Doctor
             report.Hint($"fix: add to wslbin.ini:  path = {string.Join(", ", missing)}");
         }
         return true;
+    }
+
+    // wslbin writes C:\x as /mnt/c/x (Paths.MountRoot), while WSL mounts the drives where automount.root
+    // in /etc/wsl.conf says. wslpath knows where that is; the line is marked, so that nothing else that
+    // the call prints is taken for it.
+    static void CheckMountRoot(Report report, Config cfg)
+    {
+        const string Mark = "wslbin-mount:";
+        WslResult r = WslQuery.RunBash(cfg, $"p=$(wslpath -u 'C:\\' 2>/dev/null) && printf '{Mark}%s\\n' \"$p\"");
+        string? line = Text.Lines(r.Output).FirstOrDefault(l => l.StartsWith(Mark, StringComparison.Ordinal));
+        if (line == null) return;      // no wslpath: nothing to compare with
+        string drive = line[Mark.Length..].Trim();
+        string expected = Paths.MountRoot + "c/";
+        if (drive == expected)
+        {
+            report.Ok($"drives are mounted at {Paths.MountRoot}");
+            return;
+        }
+        report.Fail($"WSL mounts drive C: at {drive}, but wslbin writes Windows paths as {expected}..., " +
+                    "so the paths it translates do not exist in Linux");
+        report.Hint("fix: set root = /mnt/ under [automount] in /etc/wsl.conf, then run: wsl --shutdown");
     }
 
     static void CheckPath(Report report, string exePath)

@@ -143,6 +143,13 @@ internal static class Program
             Out.Fail(ex.Message);
             return ExitCodes.Failed;
         }
+        // a file or folder that cannot be read or written (in use, read-only, no rights): a fact about
+        // the machine, not a fault of wslbin, so one line without a stack trace
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Out.Fail(ex.Message);
+            return ExitCodes.Failed;
+        }
         catch (Exception ex)
         {
             Out.Fail($"internal error: {ex}");

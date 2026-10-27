@@ -97,8 +97,10 @@ internal static class Paths
     }
 
     // The distribution that wslbin runs in: the one in wslbin.ini, or else the default one (null when
-    // the registry does not say).
-    public static string? RunsIn(Config cfg) => cfg.Distro.Length > 0 ? cfg.Distro : WslQuery.DefaultDistribution();
+    // the registry does not say). The registry is read once a run, however many arguments ask.
+    public static string? RunsIn(Config cfg) => cfg.Distro.Length > 0 ? cfg.Distro : DefaultDistribution.Value;
+
+    static readonly Lazy<string?> DefaultDistribution = new(() => WslQuery.DefaultDistribution());
 
     // The value of a variable from pass_env: a path, or a list of paths separated by ";".
     // Lists become ":"-separated, as PATH is on Linux, and only when every item is a path.

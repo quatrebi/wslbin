@@ -166,7 +166,9 @@ Describe 'smart mode: escaping' {
 
 Describe 'smart mode: Windows paths' {
     It "<Arg> -> <Want>" -ForEach $PathCases {
-        Get-Explain -Arguments @($Arg) | Should -BeExactly "tool $Want"
+        # a path under \\wsl.localhost is translated only in the distribution wslbin runs in: named here,
+        # so that the default distribution of this machine does not matter
+        Get-Explain -Arguments @($Arg) -Ini "distro = Ubuntu`n" | Should -BeExactly "tool $Want"
     }
 
     It 'warns about, and leaves alone, a network path' {

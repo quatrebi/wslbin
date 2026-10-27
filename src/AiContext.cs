@@ -96,8 +96,9 @@ internal static class AiContext
                     ApplySkill(Path.Combine(target.Folder, "skills", "wslbin", "SKILL.md"), remove, dryRun, cfg);
                 }
             }
-            catch (WslbinException ex)
+            catch (Exception ex) when (ex is WslbinException or IOException or UnauthorizedAccessException)
             {
+                // one agent's file that cannot be written leaves the other agent's to be done
                 Out.Fail($"{target.Name}: {ex.Message}");
                 failed = true;
             }
@@ -172,13 +173,13 @@ internal static class AiContext
             string result = left + joint + right;
             if (result.Trim().Length == 0)
             {
-                Out.Info($"{prefix}removed {path} (it held nothing else)");
                 if (!dryRun) File.Delete(path);
+                Out.Info($"{prefix}removed {path} (it held nothing else)");
             }
             else
             {
-                Out.Info($"{prefix}removed the wslbin block from {path}");
                 if (!dryRun) Text.WriteAllAtomic(path, result, bom);
+                Out.Info($"{prefix}removed the wslbin block from {path}");
             }
             return;
         }
@@ -195,14 +196,14 @@ internal static class AiContext
                 Out.Info($"the wslbin block in {path} is up to date");
                 return;
             }
-            Out.Info($"{prefix}updated the wslbin block in {path}");
             if (!dryRun) Text.WriteAllAtomic(path, updated, bom);
+            Out.Info($"{prefix}updated the wslbin block in {path}");
             return;
         }
 
         string separator = existing.Length == 0 ? "" : existing.EndsWith('\n') ? newline : newline + newline;
-        Out.Info(prefix + (exists ? $"added the wslbin block to {path}" : $"created {path}"));
         if (!dryRun) Text.WriteAllAtomic(path, existing + separator + block, bom);
+        Out.Info(prefix + (exists ? $"added the wslbin block to {path}" : $"created {path}"));
     }
 
     static void ApplySkill(string path, bool remove, bool dryRun, Config cfg)
@@ -223,11 +224,13 @@ internal static class AiContext
                 Out.Info($"no wslbin skill at {path}");
                 return;
             }
+            if (!dryRun)
+            {
+                File.Delete(path);
+                string folder = Path.GetDirectoryName(path)!;
+                if (Directory.GetFileSystemEntries(folder).Length == 0) Directory.Delete(folder);
+            }
             Out.Info($"{prefix}removed {path}");
-            if (dryRun) return;
-            File.Delete(path);
-            string folder = Path.GetDirectoryName(path)!;
-            if (Directory.GetFileSystemEntries(folder).Length == 0) Directory.Delete(folder);
             return;
         }
 
@@ -240,9 +243,11 @@ internal static class AiContext
             Out.Info($"the skill {path} is up to date");
             return;
         }
+        if (!dryRun)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            Text.WriteAllAtomic(path, skill);
+        }
         Out.Info($"{prefix}{(exists ? "updated" : "created")} {path}");
-        if (dryRun) return;
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        Text.WriteAllAtomic(path, skill);
     }
 }

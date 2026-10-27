@@ -33,19 +33,35 @@ internal static class Text
 
     /// <summary>
     /// Writes a file all or nothing: the text goes to a file beside it first, which then takes its
-    /// place. A file that belongs to the user is never left cut short.
+    /// place. A file that belongs to the user is never left cut short. A symbolic link (a CLAUDE.md
+    /// kept in a repository of dotfiles) stays a link: the file it points to is the one written. A file
+    /// that is there keeps its attributes and its access rights (File.Replace), and one that is
+    /// read-only is refused, as any editor would refuse it.
     /// </summary>
     public static void WriteAllAtomic(string path, string text, bool bom = false)
     {
-        string temp = $"{path}.wslbin-{Guid.NewGuid():N}.tmp";
+        string target = FinalPath(path);
+        string temp = $"{target}.wslbin-{Guid.NewGuid():N}.tmp";
         try
         {
             File.WriteAllText(temp, text, new UTF8Encoding(bom));
-            File.Move(temp, path, overwrite: true);
+            if (!File.Exists(target)) File.Move(temp, target);
+            else if (File.GetAttributes(target).HasFlag(FileAttributes.ReadOnly))
+                throw new UnauthorizedAccessException($"{target} is read-only: left as it is");
+            else File.Replace(temp, target, null);
         }
         finally
         {
             File.Delete(temp);
         }
+    }
+
+    // The file that a path names in the end: the target of a symbolic link (of a chain of them), or
+    // the path itself. A link whose target is relative is resolved against the folder of the link.
+    static string FinalPath(string path)
+    {
+        var info = new FileInfo(path);
+        if (info.LinkTarget == null) return path;
+        return info.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? path;
     }
 }

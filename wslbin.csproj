@@ -49,7 +49,7 @@
     <Compile Include="$([MSBuild]::Unescape($(ExtraSource)))" Condition="'$(ExtraSource)' != ''" />
   </ItemGroup>
 
-  <!-- The texts that live in files. The names are the constants of the Resources class in src/Help.cs. -->
+  <!-- The texts that live in files. The names are the constants of the Resources class in src/Resources.cs. -->
   <ItemGroup>
     <EmbeddedResource Include="wsl\complete.sh" LogicalName="wslbin.wsl.complete.sh" />
     <EmbeddedResource Include="shell\wslbin.ps1" LogicalName="wslbin.shell.wslbin.ps1" />

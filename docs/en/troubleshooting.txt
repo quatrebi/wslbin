@@ -5,7 +5,8 @@ When something does not work
    cause is the mode (wslbin --help modes), a path (wslbin --help paths) or quotes that the shell
    already removed.
 2. Check the setup:   wslbin --doctor
-   WSL, the distribution, bash, bash-completion, the folder in PATH, wslbin.ini, every wrapper.
+   WSL, the distribution, bash, where WSL mounts the drives, bash-completion, the folder in PATH,
+   wslbin.ini, every wrapper.
    Each problem comes with a "fix:" line. An [info] line is advice, not a problem: the utility of
    that wrapper has a Windows version of its own (starts faster, needs no WSL), and the line names
    the winget package.
@@ -22,6 +23,9 @@ Common causes
       The utility is not installed in WSL: wslbin --link <utility> offers to install the apt package.
       Tools in ~/.local/bin or ~/.cargo/bin: bash starts without your profile, add
       path = ~/.local/bin to wslbin.ini (wslbin --doctor says when this is the cause).
+  a translated path does not exist in Linux (C:\x became /mnt/c/x)
+      wslbin writes the drives under /mnt/. When root under [automount] in /etc/wsl.conf names
+      another folder, wslbin --doctor says so; set root = /mnt/ there and run wsl --shutdown.
   a utility prints a page of help for wsl.exe (--install, --list, --status in it)
       WSL is not installed: without it, wsl.exe answers every command with its own help, in the
       language of Windows. wslbin adds a line that says so and exits with 125, and wslbin --doctor

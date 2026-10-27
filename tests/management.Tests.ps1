@@ -394,6 +394,7 @@ Describe 'with real WSL' -Tag 'WSL' -Skip:$NoWsl {
             $r.ExitCode | Should -Be 0
             $r.Out | Should -Match '\[ ok \] wsl\.exe: '
             $r.Out | Should -Match '\[ ok \] bash \S+ starts'
+            $r.Out | Should -Match '\[ ok \] drives are mounted at /mnt/'
             $r.Out | Should -Match '\[ ok \] the folder is in PATH'
             $r.Out | Should -Not -Match '\[FAIL\]'
         }
