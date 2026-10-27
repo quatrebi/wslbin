@@ -37,9 +37,10 @@ file and needs nothing else (no .NET, no build tools).
 irm https://quatrebi.github.io/wslbin/install.ps1 | iex
 ```
 
-That downloads the latest release, checks it, and runs the installer that is in it. In a console it asks
-for whom to install and whether to hook Tab completion in; with parameters (a script block takes them) it
-asks nothing:
+That downloads the latest release, checks it, and runs the installer that is in it, in a PowerShell of its
+own (so it works whatever the execution policy of yours; the exit code is in ``, and nothing of
+the script stays in your session). In a console it asks for what you did not give (for whom to install,
+whether to hook Tab completion in); with `-Quiet` it asks nothing. Parameters go to a script block:
 
 ```powershell
 & ([scriptblock]::Create((irm https://quatrebi.github.io/wslbin/install.ps1))) -Version 0.1.7 -Scope AllUsers -Link make,rsync,dig -Completion pwsh,clink -Quiet
@@ -50,30 +51,42 @@ before you run it, if you like: [`site/install.ps1`](site/install.ps1) is short.
 releases from the site (`releases.json`: the address and the SHA256 of each zip), downloads the zip from
 GitHub Releases, checks the SHA256 (the hash comes from the site and the file from GitHub), with
 `-VerifyAttestation` also where GitHub says it was built (needs the [gh](https://cli.github.com) program),
-unpacks it into a temporary folder and runs `setup\install.ps1` from it.
+unpacks it into a temporary folder and runs `setup\install.ps1` from it. The zip must be exactly
+`wslbin-<version>-win-x64.zip` of the release `v<version>` of this repository.
 
 The zip (`wslbin-<version>-win-x64.zip` on the [releases page](https://github.com/quatrebi/wslbin/releases),
 with its `.sha256` and `SHA256SUMS.txt`) holds `wslbin.exe`, `LICENSE`, `manifest.json` (every file with
 its SHA256) and `setup\install.ps1`, `setup\uninstall.ps1`: unpack it and run
 `.\setup\install.ps1 -Link make,rsync,dig -Completion pwsh,clink` to install without a network.
 
-`-Scope AllUsers` (the default tries it first) puts wslbin in `C:\Program Files\wslbin`, in the PATH
-of the machine, and asks for administrator rights (UAC). The copy that has the rights installs the
-program and nothing more: `-Link` and `-Completion` are done afterwards as you, in your WSL and your
-profiles (so `-Link` asks for the rights once more, to write the wrappers). `-Scope CurrentUser` (the
-fallback when the rights are refused) uses `%LOCALAPPDATA%\Programs\wslbin` and the PATH of the user, and
-needs no rights. `-Completion` hooks Tab completion into PowerShell (both editions) and Clink.
+By default wslbin is installed for you: `%LOCALAPPDATA%\Programs\wslbin`, the PATH of the user, no
+administrator rights, and your `wslbin.ini` and `wslbin --link` need none either. When wslbin is installed
+for all users already, the default is to update that installation. `-Scope AllUsers` puts it in
+`C:\Program Files\wslbin` and the PATH of the machine, and asks for administrator rights (UAC); another
+folder (`-InstallDir`) must be one that only administrators can change, and a new one is made so. The copy
+that has the rights installs the program and nothing more, from a folder that only administrators can
+write to, after it has checked the SHA256 of every file again; its window shows what it did. It runs no
+program from the install folder. This protects against changes made after the check; what you run the
+installer from is yours to trust, as with any installer. `-Link` and
+`-Completion` are done afterwards as you, in your WSL and your profiles (so `-Link` asks for the rights
+once more, to write the wrappers). `-Completion` hooks Tab completion into PowerShell (both editions) and
+Clink, and warns when the execution policy of a PowerShell would not run the profile (then:
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`). An installation for the other scope is named before
+the new one is made: the one for all users comes first in PATH, so it is the one that runs.
 
 **Update** is the same command: it compares the version with the one in Settings > Apps, installs a newer
-one, says "installed already" for the same one (`-Force` installs it again) and refuses an older one
-(`-Force` goes back). Files are replaced all together or not at all; the running `wslbin.exe` and the
-wrappers are renamed to `.old` first and deleted at once or at the next run. Your `wslbin.ini` is not
-touched.
+one, says "installed already" for the same one (`-Force` installs it again; a folder that lacks
+`wslbin.exe` is installed again anyway) and refuses an older one (`-Force` goes back). Files are replaced
+all together or not at all; the running `wslbin.exe` and the wrappers are renamed to `.old` first and
+deleted at once or at the next run. Files that the new version no longer has are deleted. Your
+`wslbin.ini` is not touched. A scope holds one installation: a second one in another folder is refused.
 
 **Remove**: Settings > Apps > wslbin > Uninstall, or `setup\uninstall.ps1` in the install folder
-(`-Quiet` asks nothing, `-Purge` deletes `wslbin.ini` too). It takes out the wrappers, the PATH entry,
-the files, the entry in Apps, the hooks in the profiles and Clink, and the block for AI agents. The
-installer writes nothing else to the registry.
+(`-Quiet` asks nothing, `-Purge` deletes `wslbin.ini` too). It takes out the wrappers, the PATH entry
+(only if the installer added it), the files, the entry in Apps, the hooks in the profiles and Clink (those
+of an installation that stays are kept), and the block for AI agents. While a wrapper runs, nothing is
+removed but the wrappers that can be: close it and run the uninstall again. The installer writes nothing
+else to the registry.
 
 Then:
 
