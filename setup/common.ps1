@@ -144,16 +144,14 @@ function Set-PathEntry {
     }
 }
 
-# Tells running programs (Explorer, new terminals) that the environment has changed.
+# Tells running programs (Explorer, new terminals) that the environment has changed. .NET sends
+# WM_SETTINGCHANGE "Environment" itself whenever it sets a variable of the user, and removing one that
+# does not exist changes nothing in the registry and still sends it. Not Add-Type: Windows PowerShell
+# compiles that into a DLL in TEMP and loads it from there, and the copy with administrator rights runs
+# nothing that a program of the user could change. ([NullString]::Value: a $null given to a .NET method
+# becomes "", and that would write an empty variable instead of removing one.)
 function Send-EnvironmentChange {
-    if (-not ('Wslbin.NativeMethods' -as [type])) {
-        Add-Type -Namespace Wslbin -Name NativeMethods -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
-public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint msg, System.UIntPtr wParam, string lParam, uint flags, uint timeout, out System.UIntPtr result);
-'@
-    }
-    $result = [UIntPtr]::Zero
-    [void][Wslbin.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+    [Environment]::SetEnvironmentVariable('WSLBIN_NO_SUCH_VARIABLE_' + [guid]::NewGuid().ToString('N'), [NullString]::Value, 'User')
 }
 
 # ---- profile blocks -----------------------------------------------------------------------------
@@ -379,8 +377,9 @@ function Get-ParameterTokens([string[]]$Names, [switch]$PowerShell) {
 # also after the check): it reads each file of $Files ({Source; Path; Sha256}), checks the SHA256 of what
 # it read, writes it into a new folder under Program Files, which only administrators can write, and
 # runs $Script with $Arguments (PowerShell literals) from there. The folder is deleted at the end. When
-# that fails, the window stays open a while so that its messages can be read. $StageRoot is for the tests.
-function Get-ElevatedCommand([object[]]$Files, [string]$Script, [string[]]$Arguments, [string]$StageRoot) {
+# that fails, the window stays open a while so that its messages can be read (not with -NoPause: a
+# PowerShell that has the rights already runs it in its own console). $StageRoot is for the tests.
+function Get-ElevatedCommand([object[]]$Files, [string]$Script, [string[]]$Arguments, [string]$StageRoot, [switch]$NoPause) {
     $root = "[Environment]::GetFolderPath('ProgramFiles')"
     if ($StageRoot) { $root = ConvertTo-PowerShellLiteral $StageRoot }
     $list = @($Files | ForEach-Object {
@@ -410,14 +409,15 @@ try {
 }
 catch { Write-Warning $_.Exception.Message }
 finally { if ($stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue } }
-if ($code -ne 0 -and -not [Console]::IsInputRedirected) {
+if ($code -ne 0 -and @PAUSE@ -and -not [Console]::IsInputRedirected) {
     Write-Host ('wslbin setup: failed (exit code ' + $code + '). This window closes in 60 seconds, or when you press a key.')
     $until = [DateTime]::UtcNow.AddSeconds(60)
     try { while ([DateTime]::UtcNow -lt $until -and -not [Console]::KeyAvailable) { Start-Sleep -Milliseconds 200 } } catch { }
 }
 exit $code
 '@
-    $code.Replace('@ROOT@', $root).Replace('@FILES@', $list).Replace('@SCRIPT@', (ConvertTo-PowerShellLiteral $Script)).Replace('@ARGUMENTS@', ($Arguments -join ' '))
+    $pause = $(if ($NoPause) { '$false' } else { '$true' })
+    $code.Replace('@ROOT@', $root).Replace('@PAUSE@', $pause).Replace('@FILES@', $list).Replace('@SCRIPT@', (ConvertTo-PowerShellLiteral $Script)).Replace('@ARGUMENTS@', ($Arguments -join ' '))
 }
 
 # The command line of the PowerShell that runs that code.
@@ -427,12 +427,23 @@ function Get-ElevatedArgumentLine([string]$Command) {
 
 # Starts the code of Get-ElevatedCommand with administrator rights (UAC) and returns the exit code of
 # the script it runs: 0 done, anything else failed (its window said why); $null when the rights were refused.
+# A PowerShell that has the rights already runs the same code in its own console, without asking: the
+# files are checked into a folder that only administrators can write either way, so that nothing a
+# program of the user changes in TEMP after the check is run with those rights.
 function Invoke-Elevated([object[]]$Files, [string]$Script, [string[]]$Arguments) {
+    $admin = Test-Administrator
     # for scripts and tests: never put the UAC question on the screen
-    if ($env:WSLBIN_NO_ELEVATION -eq '1') { return $null }
-    $line = Get-ElevatedArgumentLine (Get-ElevatedCommand $Files $Script $Arguments)
+    if (-not $admin -and $env:WSLBIN_NO_ELEVATION -eq '1') { return $null }
+    $start = @{
+        FilePath         = Get-PowerShellPath
+        ArgumentList     = Get-ElevatedArgumentLine (Get-ElevatedCommand $Files $Script $Arguments -NoPause:$admin)
+        Wait             = $true
+        PassThru         = $true
+        WorkingDirectory = $env:SystemRoot
+    }
+    if ($admin) { $start.NoNewWindow = $true } else { $start.Verb = 'RunAs' }
     try {
-        $process = Start-Process -FilePath (Get-PowerShellPath) -ArgumentList $line -Verb RunAs -Wait -PassThru -WorkingDirectory $env:SystemRoot
+        $process = Start-Process @start
     }
     catch {
         return $null
@@ -500,6 +511,134 @@ function Test-HookNames([string]$Hook, [string[]]$Dirs, [switch]$Clink) {
         elseif ($Hook.IndexOf((ConvertTo-PowerShellLiteral $exe), [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
     }
     $false
+}
+
+# ---- the folder of an installation for all users -------------------------------------------------
+
+# Accounts that may change what an installation for all users is made of: Administrators, SYSTEM,
+# TrustedInstaller, and CREATOR OWNER (the rights that whoever makes a file there gets on it: in such a
+# folder that is one of the others).
+$TrustedSids = @('S-1-5-32-544', 'S-1-5-18', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464', 'S-1-3-0')
+
+# Rights that change a folder or what is in it: write and append data (add a file, a folder), write
+# extended attributes, delete a child, write attributes, delete, change the rights, take ownership, and
+# the generic "all" and "write".
+$ChangeRights = 0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000
+# What lets an account take a folder above the install folder from under it: delete (rename) it or a
+# child of it, change its rights, take ownership, the generic "all".
+$TakeAwayRights = 0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000
+# What counts on the root of a drive, which cannot be renamed: changing its rights, taking ownership,
+# deleting a child, the generic "all" (making a folder in it, as C:\ lets every account, does not).
+$RootRights = 0x40 -bor 0x40000 -bor 0x80000 -bor 0x10000000
+
+function ConvertTo-AccountName($Sid) {
+    try { $Sid.Translate([Security.Principal.NTAccount]).Value } catch { [string]$Sid.Value }
+}
+
+# The accounts other than $Trusted (SIDs) to whom the rights $Acl give any of $Mask, and an owner that is
+# not one of $Trusted (an owner may change the rights), as a list (wrap the call in @()). -Ancestor: rights that apply to the children only
+# (inherit only) do not count, since what they give is seen on the next folder down.
+function Get-FolderWriters($Acl, [string[]]$Trusted, [int64]$Mask = $ChangeRights, [switch]$Ancestor) {
+    $sidType = [Security.Principal.SecurityIdentifier]
+    $names = New-Object System.Collections.Generic.List[string]
+    $owner = $Acl.GetOwner($sidType)
+    if ($owner -and $Trusted -notcontains $owner.Value) { $names.Add((ConvertTo-AccountName $owner) + ' (the owner)') }
+    foreach ($rule in $Acl.GetAccessRules($true, $true, $sidType)) {
+        if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+        if ($Ancestor -and ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { continue }
+        if ($Trusted -contains $rule.IdentityReference.Value) { continue }
+        if (([int64][int]$rule.FileSystemRights -band $Mask) -eq 0) { continue }
+        $name = ConvertTo-AccountName $rule.IdentityReference
+        if (-not $names.Contains($name)) { $names.Add($name) }
+    }
+    $names.ToArray()
+}
+
+# The accounts other than $Trusted that could change an installation in $Dir, each with the folder that
+# lets them: through the rights of the folder itself, or of a folder above it that they could rename or
+# take over. Empty when there are none. A folder that does not exist yet is judged by those above it.
+function Get-MachineFolderWriters([string]$Dir, [string[]]$Trusted = $TrustedSids) {
+    $found = New-Object System.Collections.Generic.List[string]
+    $path = $Dir.TrimEnd('\')
+    $first = $true
+    while ($path) {
+        $parent = Split-Path -Parent $path
+        if (Test-Path -LiteralPath $path -PathType Container) {
+            $acl = Get-Acl -LiteralPath $path -ErrorAction Stop
+            if ($first) { $writers = @(Get-FolderWriters $acl $Trusted) }
+            elseif (-not $parent) { $writers = @(Get-FolderWriters $acl $Trusted -Mask $RootRights -Ancestor) }
+            else { $writers = @(Get-FolderWriters $acl $Trusted -Mask $TakeAwayRights -Ancestor) }
+            foreach ($w in $writers) { $found.Add("$w on $path") }
+        }
+        $first = $false
+        $path = $parent
+    }
+    $found.ToArray()
+}
+
+# The accounts trusted with an installation for all users: administrators, and this account when it runs
+# with administrator rights (it is one of them then).
+function Get-TrustedSids {
+    $sids = @($TrustedSids)
+    if (Test-Administrator) { $sids += [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
+    $sids
+}
+
+# The rights of a new folder of an installation for all users: Administrators and SYSTEM may do anything,
+# Users may read and run, and nothing comes from the folder above (C:\ lets every account change what is
+# in a folder made in it).
+function New-MachineFolderSecurity {
+    $security = New-Object Security.AccessControl.DirectorySecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    $none = [Security.AccessControl.PropagationFlags]::None
+    $allow = [Security.AccessControl.AccessControlType]::Allow
+    foreach ($rule in @(@('S-1-5-32-544', 'FullControl'), @('S-1-5-18', 'FullControl'), @('S-1-5-32-545', 'ReadAndExecute'))) {
+        $sid = New-Object Security.Principal.SecurityIdentifier $rule[0]
+        $security.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]$rule[1], $inherit, $none, $allow)))
+    }
+    $security
+}
+
+# Makes the folder with those rights in one step, so that it never has the rights of the folder above:
+# Windows PowerShell has Directory.CreateDirectory with rights, PowerShell 7 FileSystemAclExtensions.
+function New-MachineFolder([string]$Dir) {
+    $parent = Split-Path -Parent $Dir
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop | Out-Null }
+    $security = New-MachineFolderSecurity
+    if ('System.IO.FileSystemAclExtensions' -as [type]) { $null = [IO.FileSystemAclExtensions]::CreateDirectory($security, $Dir) }
+    else { $null = [IO.Directory]::CreateDirectory($Dir, $security) }
+}
+
+# An installation for all users is run by every account and by programs with administrator rights, and
+# the copy with those rights replaces and deletes files in its folder: so the folder must be one that only
+# administrators can change. A new one is made so; one that is there already is refused when it is not.
+function Initialize-MachineFolder([string]$Dir) {
+    if (-not (Test-Path -LiteralPath $Dir)) { New-MachineFolder $Dir }
+    $writers = @(Get-MachineFolderWriters $Dir (Get-TrustedSids))
+    if ($writers.Count -gt 0) {
+        $shown = @($writers | Select-Object -First 3) -join '; '
+        if ($writers.Count -gt 3) { $shown += '; ...' }
+        throw "$Dir can be changed by others than administrators ($shown). An installation for all users is run by every account and with administrator rights, so it must be in a folder that only administrators can change, such as $(Get-DefaultInstallDir 'AllUsers'). Nothing was installed."
+    }
+}
+
+# ---- wrappers -----------------------------------------------------------------------------------
+
+# Whether a file is a copy of wslbin.exe: its product name says so (as wslbin itself tells them).
+function Test-WrapperFile([string]$Path) {
+    try { [Diagnostics.FileVersionInfo]::GetVersionInfo($Path).ProductName -ceq 'wslbin' } catch { $false }
+}
+
+# The wrappers in $Dir, by name, as "wslbin --list --names" lists them: the .exe files that are wslbin,
+# other than wslbin.exe. Read here, not asked of the wslbin.exe there: the copy with administrator rights
+# runs no program from the folder that it changes, and a wslbin.exe that is missing or broken (an
+# install that was cut short) must not leave the wrappers as old copies.
+function Get-WrapperNames([string]$Dir) {
+    if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return @() }
+    @(Get-ChildItem -LiteralPath $Dir -Filter '*.exe' -File -Force -ErrorAction Stop |
+            Where-Object { $_.Extension -eq '.exe' -and $_.Name -ne 'wslbin.exe' -and (Test-WrapperFile $_.FullName) } |
+            ForEach-Object { $_.BaseName } | Sort-Object)
 }
 
 # ---- versions (SemVer 2.0) ----------------------------------------------------------------------
@@ -595,18 +734,28 @@ function Get-PackageFilesToCheck([string]$PackageDir, $Manifest) {
     [pscustomobject]@{ Source = (Join-Path $PackageDir 'manifest.json'); Path = 'manifest.json'; Sha256 = $Manifest.ManifestHash }
 }
 
+# What manifest.json in $Dir says: {Version; Files} with the files relative (with \), or $null when there
+# is no manifest that can be read.
+function Read-InstalledManifest([string]$Dir) {
+    $path = Join-Path $Dir 'manifest.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    try {
+        $manifest = (Read-Utf8Text $path).Text | ConvertFrom-Json
+        $files = @(foreach ($entry in @($manifest.files)) {
+                $relative = [string]$entry.path
+                if (Test-PackagePath $relative) { $relative.Replace('/', '\') }
+            })
+        [pscustomobject]@{ Version = [string]$manifest.version; Files = $files }
+    }
+    catch { $null }
+}
+
 # The files that an installation in $Dir consists of, relative: what its manifest.json names (when it
 # can be read), and the files of every package so far.
 function Get-InstalledFiles([string]$Dir) {
     $files = @('wslbin.exe', 'LICENSE', 'manifest.json', 'setup\install.ps1', 'setup\uninstall.ps1', 'setup\common.ps1')
-    $path = Join-Path $Dir 'manifest.json'
-    try {
-        foreach ($entry in @(((Read-Utf8Text $path).Text | ConvertFrom-Json).files)) {
-            $relative = [string]$entry.path
-            if (Test-PackagePath $relative) { $files += $relative.Replace('/', '\') }
-        }
-    }
-    catch { }
+    $manifest = Read-InstalledManifest $Dir
+    if ($manifest) { $files += $manifest.Files }
     @($files | Select-Object -Unique)
 }
 
@@ -705,13 +854,23 @@ function Write-OtherInstallation($Other) {
 
 # ---- laying files out ---------------------------------------------------------------------------
 
-# Files of wslbin ($Names, relative to $Dir) that an earlier run set aside as <name>.old (a program that
-# runs cannot be overwritten, but it can be renamed) and could not delete then. Only those: the folder
-# may hold files of the user's that end in .old.
+# Files of wslbin ($Names, relative to $Dir) that an earlier run set aside as <name>.old, or as
+# <name>.<32 hex digits>.old when <name>.old was still held, and could not delete then (a program that runs
+# cannot be overwritten or deleted, but it can be renamed). Only those: the folder may hold files of the
+# user's that end in .old.
 function Remove-AsideFiles([string]$Dir, [string[]]$Names) {
+    $listed = @{}
     foreach ($name in $Names) {
-        $old = Join-Path $Dir ($name + '.old')
-        if (Test-Path -LiteralPath $old -PathType Leaf) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }
+        $target = Join-Path $Dir $name
+        $parent = Split-Path -Parent $target
+        if (-not $listed.ContainsKey($parent)) {
+            $listed[$parent] = @()
+            if (Test-Path -LiteralPath $parent -PathType Container) { $listed[$parent] = @(Get-ChildItem -LiteralPath $parent -Filter '*.old' -File -Force -ErrorAction SilentlyContinue) }
+        }
+        $pattern = '^' + [regex]::Escape((Split-Path -Leaf $target)) + '\.(?:[0-9a-f]{32}\.)?old\z'
+        foreach ($file in $listed[$parent]) {
+            if ([regex]::IsMatch($file.Name, $pattern, 'IgnoreCase')) { Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue }
+        }
     }
 }
 
@@ -746,6 +905,8 @@ function Install-Files([string]$PackageDir, [string[]]$Files, [string[]]$Wrapper
     try {
         foreach ($item in $items) {
             $aside = $item.Target + '.old'
+            # still held by a program since the update before: a name of its own, deleted at a later run
+            if (Test-Path -LiteralPath $aside) { $aside = $item.Target + '.' + [guid]::NewGuid().ToString('N') + '.old' }
             $item.Aside = $null
             if (Test-Path -LiteralPath $item.Target) {
                 Move-Item -LiteralPath $item.Target -Destination $aside -Force -ErrorAction Stop

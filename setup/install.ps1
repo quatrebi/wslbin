@@ -11,20 +11,23 @@
 
       1. reads manifest.json and checks every file of the package against its SHA256;
       2. compares the version with the one that is installed (the entry in Settings > Apps): newer is
-         installed, the same is "already installed", older needs -Force;
+         installed, the same is "already installed" (unless the folder lacks wslbin.exe or holds another
+         version: then it is installed again), older needs -Force;
       3. puts the files into the install folder: each new file is written beside its target, then the old
          ones are renamed to .old and the new ones to the names, so that a failure leaves the old
-         version as it was. The wrappers that exist (wslbin --list) are replaced by copies of the new
-         wslbin.exe; wslbin.ini is not touched;
+         version as it was. The wrappers that exist (the .exe files that are copies of wslbin) are
+         replaced by copies of the new wslbin.exe; wslbin.ini is not touched; files that the old
+         manifest named and the new one does not are deleted;
       4. adds the folder to PATH (not with -NoPath) and, last, writes the entry for Settings > Apps (the
          only thing in the registry besides PATH);
       5. with -Link makes wrappers; with -Completion hooks Tab completion into the shells.
 
-    Where it goes: -Scope CurrentUser (the default) is %LOCALAPPDATA%\Programs\wslbin and the PATH and
-    Apps entry of the user, with no administrator rights. -Scope AllUsers is C:\Program Files\wslbin and
-    the PATH and Apps entry of the machine; it asks for administrator rights (UAC). -InstallDir names
-    another folder. When wslbin is installed in the other scope as well, this says so: of the two, the
-    one for all users runs.
+    Where it goes: -Scope CurrentUser is %LOCALAPPDATA%\Programs\wslbin and the PATH and Apps entry of
+    the user, with no administrator rights. -Scope AllUsers is C:\Program Files\wslbin and the PATH and
+    Apps entry of the machine; it asks for administrator rights (UAC). Without -Scope it is CurrentUser,
+    unless wslbin is installed for all users: then that installation is updated. -InstallDir names
+    another folder; for all users, one that only administrators can change (a new one is made so). When
+    wslbin is installed in the other scope as well, this says so: of the two, the one for all users runs.
 
     The exit code is 0, or 1 when something went wrong that did not stop the install (a profile that is
     not UTF-8 text and was left alone, a wrapper that could not be made), or 2 when the install failed.
@@ -37,8 +40,9 @@
 #>
 [CmdletBinding()]
 param(
+    # default: AllUsers when wslbin is installed for all users (an update goes there), else CurrentUser
     [ValidateSet('AllUsers', 'CurrentUser')]
-    [string]$Scope = 'CurrentUser',
+    [string]$Scope,
     [string]$InstallDir,
     # utilities to make wrappers for after the install
     [string[]]$Link = @(),
@@ -71,6 +75,25 @@ $ErrorActionPreference = 'Stop'
 # those rights: with another account's password at the UAC prompt, the copy with rights runs as that
 # account and would change its profiles and its WSL instead.
 
+# The scope without -Scope: the one for all users when wslbin is installed there (in -InstallDir, if
+# that is given), so that an update does not make a second copy for the user that the one for all users
+# hides (it comes first in PATH); else the one of the user.
+function Get-DefaultScope([string]$Dir) {
+    $machine = Get-UninstallEntry (Get-UninstallHive 'AllUsers')
+    if (-not $machine -or -not $machine.Location -or -not (Test-Path -LiteralPath (Join-Path $machine.Location 'wslbin.exe'))) { return 'CurrentUser' }
+    if ($Dir -and (ConvertTo-ComparablePath $Dir) -ne (ConvertTo-ComparablePath $machine.Location)) { return 'CurrentUser' }
+    Write-Step "wslbin $($machine.Version) is installed for all users in $($machine.Location): that one is updated (-Scope CurrentUser installs a copy for this user instead)"
+    'AllUsers'
+}
+
+# Whether the folder holds the installation that its entry in Apps names: wslbin.exe, and a manifest.json
+# of that version.
+function Test-InstallationIntact([string]$Dir, [string]$Version) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Dir 'wslbin.exe') -PathType Leaf)) { return $false }
+    $manifest = Read-InstalledManifest $Dir
+    $manifest -and $manifest.Version -ceq $Version
+}
+
 # The scope and the folder: -InstallDir, or the usual one of the scope.
 function Set-InstallTarget([string]$ForScope) {
     $script:EffectiveScope = $ForScope
@@ -85,29 +108,40 @@ function Install-Program($Manifest) {
     $hive = Get-UninstallHive $script:EffectiveScope
     $installed = Get-UninstallEntry $hive
     $sameFolder = $installed -and $installed.Location -and (ConvertTo-ComparablePath $installed.Location) -eq (ConvertTo-ComparablePath $script:Dir)
+    if ($installed -and $installed.Location -and -not $sameFolder) {
+        # Settings > Apps holds one installation a scope: a second one would take the entry of the first,
+        # whose files and PATH entry nothing would remove then. An entry whose folder holds no wslbin any
+        # more names nothing, and is replaced.
+        if (Test-Path -LiteralPath (Join-Path $installed.Location 'wslbin.exe')) {
+            throw "wslbin $($installed.Version) is installed in $($installed.Location) already. Update that one (-InstallDir $($installed.Location)), or remove it first."
+        }
+        Write-Step "the entry in Settings > Apps names $($installed.Location), which holds no wslbin.exe any more: it is replaced"
+        $installed = $null
+    }
     if ($installed) {
-        if ($installed.Location -and -not $sameFolder -and -not $Force) {
-            throw "wslbin $($installed.Version) is installed in $($installed.Location) already. Update that one (-InstallDir), remove it first, or use -Force to install here as well."
+        if (-not (ConvertFrom-SemVer $installed.Version)) {
+            if (-not $Force) { throw "The entry in Settings > Apps says that wslbin '$($installed.Version)' is installed, which is not a version this installer can compare. Use -Force to install $($Manifest.Version) over it." }
         }
-        $order = Compare-SemVer $Manifest.Version $installed.Version
-        if ($order -eq 0 -and -not $Force) {
-            Write-Step "wslbin $($Manifest.Version) is installed already (-Force installs it again)"
-            return $false
-        }
-        if ($order -lt 0 -and -not $Force) {
-            throw "wslbin $($installed.Version) is installed, which is newer than $($Manifest.Version). Use -Force to go back."
+        else {
+            $order = Compare-SemVer $Manifest.Version $installed.Version
+            if ($order -eq 0 -and -not $Force) {
+                if (Test-InstallationIntact $script:Dir $installed.Version) {
+                    Write-Step "wslbin $($Manifest.Version) is installed already (-Force installs it again)"
+                    return $false
+                }
+                Write-Step "wslbin $($Manifest.Version) in $($script:Dir) is not complete (wslbin.exe or its manifest.json is missing, or says another version): it is installed again"
+            }
+            if ($order -lt 0 -and -not $Force) {
+                throw "wslbin $($installed.Version) is installed, which is newer than $($Manifest.Version). Use -Force to go back."
+            }
         }
     }
 
-    $exe = Join-Path $script:Dir 'wslbin.exe'
-    $wrappers = @()
-    if (Test-Path -LiteralPath $exe) {
-        $list = Invoke-Native $exe @('--list', '--names')
-        if ($list.ExitCode -ne 0) {
-            throw "The wslbin.exe in $($script:Dir) could not say which wrappers it has (wslbin --list ended with exit code $($list.ExitCode)), and they must be replaced along with it: nothing was changed. Remove that installation first, then install again."
-        }
-        $wrappers = @($list.Out | Where-Object { $_ })
-    }
+    # The copy with administrator rights changes this folder and runs from nowhere a program of the user
+    # could change: a folder that others can change is refused (a new one is made for administrators only).
+    if ($script:EffectiveScope -eq 'AllUsers') { Initialize-MachineFolder $script:Dir }
+    $wrappers = @(Get-WrapperNames $script:Dir)
+    $previous = Read-InstalledManifest $script:Dir
 
     # manifest.json goes along: it says which version is in the folder
     $files = @($Manifest.Files) + 'manifest.json'
@@ -143,6 +177,13 @@ function Install-Program($Manifest) {
         throw
     }
     Complete-Placement $placement
+    # what the package before had and this one has not (a file it no longer needs); never wslbin.ini
+    if ($previous) {
+        foreach ($relative in $previous.Files) {
+            if ($files -contains $relative -or $relative -eq 'wslbin.ini') { continue }
+            Remove-Item -LiteralPath (Join-Path $script:Dir $relative) -Force -ErrorAction SilentlyContinue
+        }
+    }
     $true
 }
 
@@ -208,8 +249,12 @@ function Install-Wslbin {
         $other = Get-OtherInstallation $script:EffectiveScope $script:Dir
         if ($other) { Write-OtherInstallation $other }
 
-        if ($script:EffectiveScope -eq 'AllUsers' -and -not (Test-Administrator)) {
-            Write-Step 'asking for administrator rights (UAC) to install for all users'
+        # For all users always through the copy with administrator rights, also from a PowerShell that has
+        # them already: that copy installs from files checked into a folder that only administrators can
+        # write, not from the package in TEMP, which any program of the user can change after the check.
+        if ($script:EffectiveScope -eq 'AllUsers') {
+            if (Test-Administrator) { Write-Step 'checking the package into a folder for administrators, and installing for all users from there' }
+            else { Write-Step 'asking for administrator rights (UAC) to install for all users' }
             $arguments = @('-Scope', 'AllUsers', '-InstallDir', (ConvertTo-PowerShellLiteral $script:Dir)) + (Get-ParameterTokens @('NoPath', 'Force', 'UninstallKey') -PowerShell) + '-Elevated'
             $code = Invoke-Elevated @(Get-PackageFilesToCheck $script:Package $manifest) 'setup\install.ps1' $arguments
             if ($null -eq $code) { throw 'Installing for all users needs administrator rights, and they were refused. (Without -Scope AllUsers wslbin is installed for the current user, with no rights needed.)' }
@@ -233,6 +278,7 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 
 $script:BoundParameters = $PSBoundParameters
 $InstallDir = ConvertTo-FullPath $InstallDir
+if (-not $Scope) { $Scope = Get-DefaultScope $InstallDir }
 $ProfileRoot = ConvertTo-FullPath $ProfileRoot
 $ClinkDir = ConvertTo-FullPath $ClinkDir
 $PackageDir = ConvertTo-FullPath $PackageDir

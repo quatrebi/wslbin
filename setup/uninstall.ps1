@@ -3,7 +3,7 @@
     Removes wslbin: "Settings > Apps > wslbin > Uninstall" runs this script, and so can you.
 
 .DESCRIPTION
-    Takes out what install.ps1 put in: the wrappers (wslbin --unlink --all), the PATH entry (when the
+    Takes out what install.ps1 put in: the wrappers (the copies of wslbin.exe), the PATH entry (when the
     installer added it), wslbin.exe and the other files of the package, the entry in Settings > Apps, and
     the hooks: the blocks in the PowerShell profiles and the Clink script, unless they belong to an
     installation that is still there, and the block for AI agents when the last installation goes. Your
@@ -15,7 +15,8 @@
     all users (its entry in Apps is the one of the machine) asks for administrator rights (UAC).
 
     The exit code is 0, or 1 when something could not be removed (a program that runs holds its file:
-    close it and run this again), or 2 when it failed.
+    close it and run this again; until then the installation stays, with its entry in Apps), or 2 when
+    it failed.
 
 .EXAMPLE
     .\setup\uninstall.ps1 -Quiet
@@ -67,30 +68,56 @@ function Get-Installations([string[]]$More) {
     @(Select-UniquePath $candidates | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'wslbin.exe') })
 }
 
+# The wrappers of $Names (without .exe) in $Dir, deleted; returns the files that could not be (a program
+# that runs holds its file).
+function Remove-Wrappers([string]$Dir, [string[]]$Names) {
+    $left = @()
+    foreach ($name in $Names) {
+        try {
+            Remove-Item -LiteralPath (Join-Path $Dir "$name.exe") -Force -ErrorAction Stop
+            Write-Line "removed $name.exe"
+        }
+        catch { $left += "$name.exe" }
+    }
+    , $left
+}
+
 # One installation: its wrappers, its PATH entry, its files, its entry in Apps, and the folder when
-# nothing of the user's is left in it.
+# nothing of the user's is left in it. Nothing is run from the folder: the wrappers are found by their
+# product name, as wslbin finds them.
 function Remove-Installation([string]$Dir, [string]$ForScope) {
     $exe = Join-Path $Dir 'wslbin.exe'
-    # what to delete is known before anything is: manifest.json names the files
-    $files = Get-InstalledFiles $Dir
-    $wrappers = @()
-    $list = Invoke-Native $exe @('--list', '--names')
-    if ($list.ExitCode -eq 0) { $wrappers = @($list.Out | Where-Object { $_ } | ForEach-Object { "$_.exe" }) }
-    Write-Step "removing wrappers in $Dir"
-    Invoke-WslbinStep $exe @('--unlink', '--all')
-
-    # PATH: only the scope of the installation, and only when the installer added the folder (it may have
-    # been there before, for something else)
     $hive = Get-UninstallHive $ForScope
-    $entry = Get-UninstallEntry $hive
-    $ours = $entry -and (-not $entry.Location -or (ConvertTo-ComparablePath $entry.Location) -eq (ConvertTo-ComparablePath $Dir))
-    if (-not $NoPath -and $ours -and $entry.PathAdded) {
-        $location = Get-PathLocation $ForScope
-        if (Set-PathEntry -Hive $location.Hive -SubKey $location.SubKey -Entry $Dir -Remove) {
-            Send-EnvironmentChange
-            Write-Step "took $Dir out of the $ForScope PATH"
+
+    # With administrator rights, files are deleted only in a folder that only administrators can change:
+    # in any other, a link that someone put there could make this delete files elsewhere. The PATH entry
+    # and the entry in Apps still go; the files are left to whoever owns them.
+    if ($ForScope -eq 'AllUsers' -and (Test-Administrator)) {
+        $writers = @(Get-MachineFolderWriters $Dir (Get-TrustedSids))
+        if ($writers.Count -gt 0) {
+            Write-Problem "$Dir can be changed by others than administrators ($(@($writers | Select-Object -First 3) -join '; ')), so its files are not deleted with administrator rights: delete the folder yourself. Its PATH entry and its entry in Apps are removed."
+            $script:Problems++
+            Remove-InstallationEntries $Dir $ForScope $hive
+            return
         }
     }
+
+    # what to delete is known before anything is: manifest.json names the files
+    $files = Get-InstalledFiles $Dir
+    $wrappers = @(Get-WrapperNames $Dir)
+    if ($wrappers.Count -gt 0) {
+        Write-Step "removing wrappers in $Dir"
+        $left = Remove-Wrappers $Dir $wrappers
+        if ($left.Count -gt 0) {
+            # the rest stays, so that a run after the program has ended finds this installation and ends it
+            Write-Problem "Could not remove $($left -join ', ') in $Dir (a program that runs holds it). Close it and run this again: until then wslbin stays installed there."
+            $script:Problems++
+            return
+        }
+    }
+    $wrappers = @($wrappers | ForEach-Object { "$_.exe" })
+
+    Remove-InstallationPath $Dir $ForScope $hive
     try {
         Remove-Item -LiteralPath $exe -Force -ErrorAction Stop
     }
@@ -112,6 +139,49 @@ function Remove-Installation([string]$Dir, [string]$ForScope) {
     if ((Test-Path -LiteralPath $ini) -and $Purge) { Remove-Item -LiteralPath $ini -Force }
     if (Test-Path -LiteralPath $ini) { Write-Step "kept $ini (your settings; -Purge deletes it)" }
     elseif (-not (Get-ChildItem -LiteralPath $Dir -Force)) { Remove-Item -LiteralPath $Dir -Force }
+}
+
+# PATH: only the scope of the installation, and only when the installer added the folder (it may have
+# been there before, for something else).
+function Remove-InstallationPath([string]$Dir, [string]$ForScope, $Hive) {
+    $entry = Get-UninstallEntry $Hive
+    $ours = $entry -and (-not $entry.Location -or (ConvertTo-ComparablePath $entry.Location) -eq (ConvertTo-ComparablePath $Dir))
+    if (-not $NoPath -and $ours -and $entry.PathAdded) {
+        $location = Get-PathLocation $ForScope
+        if (Set-PathEntry -Hive $location.Hive -SubKey $location.SubKey -Entry $Dir -Remove) {
+            Send-EnvironmentChange
+            Write-Step "took $Dir out of the $ForScope PATH"
+        }
+    }
+}
+
+# The PATH entry and the entry in Apps of an installation whose files stay.
+function Remove-InstallationEntries([string]$Dir, [string]$ForScope, $Hive) {
+    Remove-InstallationPath $Dir $ForScope $Hive
+    if (Remove-UninstallEntry $Hive $Dir) { Write-Step 'removed the entry in Settings > Apps' }
+}
+
+# Where this script puts what it runs from (a copy of itself, wslbin.exe for the last step): TEMP, which
+# every program of the user can write. With administrator rights a folder under Program Files instead,
+# which only administrators can write (that is where the elevated copy checks its files into, too).
+function Get-ScratchRoot {
+    if (Test-Administrator) {
+        $root = [Environment]::GetFolderPath('ProgramFiles')
+        if ($root -and (Test-Path -LiteralPath $root)) { return $root }
+    }
+    [IO.Path]::GetTempPath()
+}
+
+# The scripts that the copy with administrator rights runs to remove the installation in $Dir: those of
+# that installation when only administrators can change its folder (nothing of the user's can change them
+# between the check and the run, also while the question of this script waits), or else this copy.
+function Get-UninstallScriptsToCheck([string]$Dir) {
+    $installed = @{ 'setup\uninstall.ps1' = (Join-Path $Dir 'setup\uninstall.ps1'); 'setup\common.ps1' = (Join-Path $Dir 'setup\common.ps1') }
+    $own = @{ 'setup\uninstall.ps1' = $script:EntryScript; 'setup\common.ps1' = (Join-Path $PSScriptRoot 'common.ps1') }
+    $sources = $own
+    $present = @($installed.Values | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq 2
+    if ($present -and @(Get-MachineFolderWriters (Join-Path $Dir 'setup')).Count -eq 0) { $sources = $installed }
+    @((Get-FileToCheck $sources['setup\uninstall.ps1'] 'setup\uninstall.ps1'), (Get-FileToCheck $sources['setup\common.ps1'] 'setup\common.ps1'))
 }
 
 # The hooks in the profiles and the Clink script go, unless they belong to an installation that is still
@@ -162,7 +232,7 @@ function Uninstall-Wslbin {
     $others = @($all | Where-Object { $targets -notcontains $_ })
     $helper = $null
     if ($targets.Count -gt 0 -and $others.Count -eq 0) {
-        $helperFolder = Join-Path ([IO.Path]::GetTempPath()) ('wslbin-uninstall-' + [guid]::NewGuid().ToString('N'))
+        $helperFolder = Join-Path (Get-ScratchRoot) ('wslbin-uninstall-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $helperFolder | Out-Null
         $helper = Join-Path $helperFolder 'wslbin.exe'
         Copy-Item -LiteralPath (Join-Path $targets[0] 'wslbin.exe') -Destination $helper
@@ -171,7 +241,7 @@ function Uninstall-Wslbin {
         foreach ($dir in $machine) {
             if (Test-Administrator) { Remove-Installation $dir 'AllUsers'; continue }
             Write-Step "asking for administrator rights (UAC) to remove the installation for all users in $dir"
-            $files = @((Get-FileToCheck $script:EntryScript 'setup\uninstall.ps1'), (Get-FileToCheck (Join-Path $PSScriptRoot 'common.ps1') 'setup\common.ps1'))
+            $files = Get-UninstallScriptsToCheck $dir
             $arguments = @('-InstallDir', (ConvertTo-PowerShellLiteral $dir)) + (Get-ParameterTokens @('Purge', 'NoPath', 'UninstallKey') -PowerShell) + @('-Quiet', '-Elevated')
             $code = Invoke-Elevated $files 'setup\uninstall.ps1' $arguments
             if ($null -eq $code) { throw "The administrator rights were refused: the installation for all users in $dir was not removed." }
@@ -216,7 +286,7 @@ if (-not $FromTemp -and -not $Elevated) {
     $here = Split-Path -Parent $PSScriptRoot
     $dir = $InstallDir
     if (-not $dir -and (Test-Path -LiteralPath (Join-Path $here 'wslbin.exe'))) { $dir = $here }
-    $temp = Join-Path ([IO.Path]::GetTempPath()) ('wslbin-uninstall-script-' + [guid]::NewGuid().ToString('N'))
+    $temp = Join-Path (Get-ScratchRoot) ('wslbin-uninstall-script-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $temp | Out-Null
     $code = 2
     try {
