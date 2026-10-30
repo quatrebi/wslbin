@@ -595,13 +595,21 @@ Describe 'setup: the folder of an installation for all users' {
         $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
         @($rules | Where-Object { $_.IsInherited }).Count | Should -Be 0
         @($rules | ForEach-Object { $_.IdentityReference.Value } | Sort-Object) | Should -Be @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-32-545')
-        # the folder is made by this account, which is no administrator here: that much it says
-        (@(Get-FolderWriters $acl $TrustedSids) -join "`n") | Should -Match '\(the owner\)$'
+        # the folder is made by this account: when it is no administrator, its owner is that account and
+        # is named; with administrator rights (a runner of CI) the owner is Administrators, which is trusted
+        $writers = @(Get-FolderWriters $acl $TrustedSids)
+        if ($TrustedSids -contains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { $writers.Count | Should -Be 0 }
+        else { ($writers -join "`n") | Should -Match '\(the owner\)$' }
     }
 
     It 'refuses an installation for all users in a folder that others can change, and installs nothing' {
         $mine = Join-Path $global:WslbinTest.Work ('mine-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $mine | Out-Null
+        # (an account with administrator rights counts as trusted, so the rights of Users make it certain)
+        $acl = Get-Acl -LiteralPath $mine
+        $users = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($users, 'Modify', 'ContainerInherit, ObjectInherit', 'None', 'Allow')))
+        Set-Acl -LiteralPath $mine -AclObject $acl
         { Initialize-MachineFolder $mine } | Should -Throw '*can be changed by others than administrators*Nothing was installed*'
     }
 }

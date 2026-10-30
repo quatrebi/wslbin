@@ -155,7 +155,8 @@ Describe 'messages of wsl.exe' {
         $wsl = New-FakeWsl -Files @{ 'list.out' = $script:Usage; 'list.exit' = '1' }
         $h = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $h | Out-Null
-        $null = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Arguments @('--internal-link', 'grep')
+        # (the PATH is the test's own: a grep of Git on the PATH of a runner would be a name conflict)
+        $null = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Env @{ PATH = (Get-IsolatedPath $h) } -Arguments @('--internal-link', 'grep')
         $r = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Env $wsl -Arguments @('--doctor')
         $r.Out | Should -Match 'wrapper\(s\), not checked in WSL: grep'
         $r.Out | Should -Not -Match 'all fine'
@@ -165,7 +166,7 @@ Describe 'messages of wsl.exe' {
         $wsl = New-FakeWsl -Files @{ 'run.out' = (ConvertTo-Utf16 "There is no distribution with the supplied name.`r`n"); 'run.exit' = '-1' }
         $h = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $h | Out-Null
-        $null = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Arguments @('--internal-link', 'grep')
+        $null = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Env @{ PATH = (Get-IsolatedPath $h) } -Arguments @('--internal-link', 'grep')
         $r = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Env $wsl -Arguments @('--list')
         $r.Out | Should -Match '^grep\s+not checked in WSL'
         $r.Out | Should -Not -Match '\bok\b'

@@ -131,7 +131,11 @@ Describe 'build.ps1' {
     }
     It 'without -Version, the program says what get-version.ps1 gives for this checkout' {
         $expected = Get-WslbinVersion -Repo $script:Repo -Kind local
-        (& $global:WslbinTest.Exe --version) | Should -BeExactly "wslbin $expected"
+        # built here, not taken from $global:WslbinTest.Exe: CI hands the tests a program that was built
+        # once with the version of its branch (WSLBIN_TEST_EXE)
+        $exe = Join-Path (Join-Path $global:WslbinTest.Work ('build-' + [guid]::NewGuid().ToString('N'))) 'wslbin.exe'
+        $null = & (Join-Path $global:WslbinTest.Repo 'build.ps1') -Output $exe 6>$null
+        (& $exe --version) | Should -BeExactly "wslbin $expected"
     }
     It 'refuses a version that is not SemVer 2.0: <_>' -ForEach @('banana', '1.2', '01.2.3', '1.2.3-', '1.2.3+') {
         { Build-WithVersion $_ } | Should -Throw '*SemVer*'
