@@ -35,6 +35,18 @@ BeforeAll {
     . (Join-Path $script:Repo 'setup\common.ps1')
     $ErrorActionPreference = $oldPreference
 
+    # The functions read the parameters of the scripts ($UninstallKey, $NoPath, $ProfileRoot, $ClinkDir) as
+    # variables of the caller; unset, they mean the real Apps entry, the real PATH and the real profiles.
+    # Values of the test right after each dot-source, so that a test that forgets one touches nothing real.
+    function Set-SafeScriptDefaults {
+        $safe = Join-Path $global:WslbinTest.Work ('unset-' + [guid]::NewGuid().ToString('N'))
+        Set-Variable -Scope 1 -Name UninstallKey -Value ('Software\wslbin-tests\unset-' + [guid]::NewGuid().ToString('N'))
+        Set-Variable -Scope 1 -Name NoPath -Value $true
+        Set-Variable -Scope 1 -Name ProfileRoot -Value (Join-Path $safe 'Documents')
+        Set-Variable -Scope 1 -Name ClinkDir -Value (Join-Path $safe 'clink')
+    }
+    Set-SafeScriptDefaults
+
     # A copy of wslbin.exe that differs from it by one byte after the end (a program still runs with that):
     # "the next version" of a package.
     function New-ExeVariant {
@@ -149,6 +161,7 @@ BeforeAll {
     # an entry in Apps under a hive (the real HKCU, or a fake HKLM), as the installer writes it
     function Set-TestEntry($Hive, [string]$Key, [string]$Version, [string]$Location) {
         $k = $Hive.CreateSubKey($Key)
+        $k.SetValue('DisplayName', 'wslbin')
         $k.SetValue('DisplayVersion', $Version)
         $k.SetValue('InstallLocation', $Location)
         $k.Close()
@@ -500,6 +513,20 @@ public static class CommandLineParser
 }
 
 Describe 'setup: small helpers' {
+    It 'deletes only a key that is an entry of wslbin, whatever -UninstallKey names' {
+        $key = 'Software\wslbin-tests\other-' + [guid]::NewGuid().ToString('N')
+        $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($key)
+        $k.SetValue('DisplayVersion', '1.0'); $k.SetValue('Theirs', 'keep'); $k.Close()
+        try {
+            $UninstallKey = $key
+            Remove-UninstallEntry ([Microsoft.Win32.Registry]::CurrentUser) 'C:\anything' | Should -BeFalse
+            $left = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($key)
+            $left | Should -Not -BeNullOrEmpty
+            $left.Close()
+        }
+        finally { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($key, $false) }
+    }
+
     It 'tells a right hash from a wrong one' {
         $f = Join-Path $global:WslbinTest.Work 'hash-me.txt'
         [IO.File]::WriteAllText($f, 'abc')
@@ -605,12 +632,26 @@ Describe 'setup: the folder of an installation for all users' {
     It 'refuses an installation for all users in a folder that others can change, and installs nothing' {
         $mine = Join-Path $global:WslbinTest.Work ('mine-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $mine | Out-Null
-        # (an account with administrator rights counts as trusted, so the rights of Users make it certain)
+        # (the rights of Users make it certain, whoever runs the test)
         $acl = Get-Acl -LiteralPath $mine
         $users = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'
         $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($users, 'Modify', 'ContainerInherit, ObjectInherit', 'None', 'Allow')))
         Set-Acl -LiteralPath $mine -AclObject $acl
         { Initialize-MachineFolder $mine } | Should -Throw '*can be changed by others than administrators*Nothing was installed*'
+    }
+
+    It 'does not trust the account that installs, even with administrator rights: its programs without them are the same account' {
+        function Test-Administrator { $true }
+        $mine = Join-Path $global:WslbinTest.Work ('own-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $mine | Out-Null
+        # The rights as the test says, not as the TEMP of this machine has them (it may give others more): the
+        # folder lets this account change it, and the folders above it are the administrators' only.
+        $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        function Get-Acl([string]$LiteralPath) {
+            if ($LiteralPath -eq $mine) { New-TestSecurity 'S-1-5-32-544' @(@('S-1-5-32-544', 'FullControl'), @($me, 'FullControl')) }
+            else { New-TestSecurity 'S-1-5-32-544' @(, @('S-1-5-32-544', 'FullControl')) }
+        }
+        { Initialize-MachineFolder $mine } | Should -Throw '*can be changed by others than administrators*'
     }
 }
 
@@ -645,6 +686,9 @@ Describe 'setup: the environment and the copy with administrator rights' {
         finally { $env:WSLBIN_NO_ELEVATION = $saved }
         $script:Started.ContainsKey('Verb') | Should -BeFalse
         $script:Started.NoNewWindow | Should -BeTrue
+        # Windows PowerShell of the system folder, which only administrators can change; not the PowerShell
+        # of $PSHOME, which may be a PowerShell 7 unpacked where the user can change it
+        $script:Started.FilePath | Should -BeExactly (Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe')
         $script:Started.ArgumentList | Should -Match ([regex]::Escape('-and $false -and'))
         (Get-ElevatedCommand @() 'setup\install.ps1' @()) | Should -Match ([regex]::Escape('$code -ne 0 -and $true -and'))
     }
@@ -777,6 +821,24 @@ Describe 'setup: laying files out, all or nothing' {
 }
 
 Describe 'setup\install.ps1 in <Shell>' -ForEach $Shells {
+    It 'refuses a folder that holds files of something else with the names of its own, and changes nothing there' {
+        $p = New-Package -Version '0.1.7'
+        $f = New-InstallFolders
+        New-Item -ItemType Directory -Path $f.Install | Out-Null
+        [IO.File]::WriteAllText((Join-Path $f.Install 'LICENSE'), 'theirs')
+        # a manifest.json of another program, whose files an update would otherwise take for those of an
+        # older wslbin and delete
+        [IO.File]::WriteAllText((Join-Path $f.Install 'manifest.json'), '{"files":[{"path":"keep.txt"}]}')
+        [IO.File]::WriteAllText((Join-Path $f.Install 'keep.txt'), 'keep')
+        $r = Install-Test $Exe $p $f
+        $r.ExitCode | Should -Be 2
+        (($r.Err + $r.Out) -replace '\s+', ' ') | Should -Match "holds LICENSE, which is not wslbin's"
+        [IO.File]::ReadAllText((Join-Path $f.Install 'LICENSE')) | Should -BeExactly 'theirs'
+        Test-Path (Join-Path $f.Install 'keep.txt') | Should -BeTrue
+        Test-Path (Join-Path $f.Install 'wslbin.exe') | Should -BeFalse
+        Get-AppsEntry $f | Should -BeNullOrEmpty
+    }
+
     It 'installs the package, keeps wslbin.ini, writes the Apps entry and hooks the shells in' {
         $p = New-Package -Version '0.1.7'
         $f = New-InstallFolders
@@ -1127,6 +1189,29 @@ Describe 'the copy with administrator rights, the code that it runs, in <Shell>'
         @(Get-ChildItem $stageRoot -Force).Count | Should -Be 0
     }
 
+    # PowerShell loads a module for a command it does not know yet from the first folder of PSModulePath that
+    # has one, and the folders of the user come first: a module there must not stand in for the commands of
+    # the copy with administrator rights. (PowerShell 7 puts its own folder first, whatever the variable says.)
+    It 'loads no module from a folder of the user, which could stand in for the commands it checks with' -Skip:($Shell -ne 'Windows PowerShell 5.1') {
+        $p = New-Package -Version '0.1.7'
+        $f = New-InstallFolders
+        $stageRoot = Join-Path $f.Base 'program-files'
+        New-Item -ItemType Directory -Path $stageRoot | Out-Null
+        $modules = Join-Path $f.Base 'user-modules'
+        New-Item -ItemType Directory -Path (Join-Path $modules 'Shadow') | Out-Null
+        $marker = Join-Path $f.Base 'shadow-ran'
+        $module = "function Get-FileHash { [IO.File]::WriteAllText('$marker', 'x'); Microsoft.PowerShell.Utility\Get-FileHash @args }`n" +
+                  "function New-Item { [IO.File]::WriteAllText('$marker', 'x'); Microsoft.PowerShell.Management\New-Item @args }`n" +
+                  "Export-ModuleMember -Function Get-FileHash, New-Item`n"
+        [IO.File]::WriteAllText((Join-Path $modules 'Shadow\Shadow.psm1'), $module)
+        $files = @(Get-PackageFilesToCheck $p.Dir (Read-Manifest $p.Dir))
+        $command = Get-ElevatedCommand $files 'setup\install.ps1' (Get-ElevatedInstallArguments $f) $stageRoot
+        $system = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules'
+        $r = Invoke-Script -Exe $Exe -ArgumentLine (Get-ElevatedArgumentLine $command) -Env @{ PSModulePath = "$modules;$system" }
+        $r.ExitCode | Should -Be 0 -Because ($r.Err + $r.Out)
+        Test-Path $marker | Should -BeFalse
+    }
+
     It 'does nothing when a file was changed after this copy checked it, and deletes what it had copied' {
         $p = New-Package -Version '0.1.7'
         $f = New-InstallFolders
@@ -1144,7 +1229,10 @@ Describe 'the copy with administrator rights, the code that it runs, in <Shell>'
         @(Get-ChildItem $stageRoot -Force).Count | Should -Be 0
     }
 
-    It 'removes an installation for all users from a folder of its own, and takes that folder away' {
+    # With administrator rights (a runner of CI) the copy deletes no file in a folder that the account can
+    # change, and TEMP is such a folder; that is the behaviour (the test below, with administrator rights
+    # put in by a stand-in, covers it). So this one runs where the test process has no such rights.
+    It 'removes an installation for all users from a folder of its own, and takes that folder away' -Skip:([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         $f = New-InstallFolders
         $first = Install-Test $Exe (New-Package) $f
         $first.ExitCode | Should -Be 0 -Because $first.Err
@@ -1165,6 +1253,7 @@ Describe 'setup\install.ps1, its functions in this process' {
         $saved = $ErrorActionPreference
         . (Join-Path $script:Repo 'setup\install.ps1')
         $ErrorActionPreference = $saved
+        Set-SafeScriptDefaults
         # PATH of a key of the test, never the real one
         function New-TestPathKey([string]$Value) {
             $path = 'Software\wslbin-tests\path-' + [guid]::NewGuid().ToString('N')
@@ -1215,7 +1304,7 @@ Describe 'setup\install.ps1, its functions in this process' {
 
     It 'records in the Apps entry whether it put the folder into PATH (not when the folder was there before)' {
         $p = New-Package -Version '0.1.7'
-        $UninstallKey = $null; $NoPath = $false; $Force = $false
+        $NoPath = $false; $Force = $false
         $script:Package = $p.Dir
 
         $f = New-InstallFolders
@@ -1340,6 +1429,7 @@ Describe 'setup\uninstall.ps1, its functions in this process' {
         $saved = $ErrorActionPreference
         . (Join-Path $script:Repo 'setup\uninstall.ps1')
         $ErrorActionPreference = $saved
+        Set-SafeScriptDefaults
     }
 
     It 'tells an installation for all users by its entry in Apps, wherever its folder is' {
@@ -1506,6 +1596,39 @@ Describe 'setup\uninstall.ps1 in <Shell>' -ForEach $Shells {
         Install-ForUninstall $Exe $g
         (Invoke-Uninstaller $Exe $g @('-Purge')).ExitCode | Should -Be 0
         Test-Path $g.Install | Should -BeFalse
+    }
+
+    It 'removes the installation when it is started from inside the install folder, which no process may be in to delete it' {
+        $f = New-InstallFolders
+        Install-ForUninstall $Exe $f
+        $r = Invoke-Script -Exe $Exe -Script (Join-Path $f.Install 'setup\uninstall.ps1') -Arguments (Get-UninstallArguments $f) -Folder (Join-Path $f.Install 'setup')
+        $r.ExitCode | Should -Be 0 -Because ($r.Err + $r.Out)
+        Get-AppsEntry $f | Should -BeNullOrEmpty
+        Test-Path (Join-Path $f.Install 'wslbin.exe') | Should -BeFalse
+    }
+
+    It 'run from an unpacked package, which is no installation, leaves the package alone and looks in the usual places' {
+        $p = New-Package -Version '0.1.7'
+        $f = New-InstallFolders
+        $r = Invoke-Script -Exe $Exe -Script (Join-Path $p.Dir 'setup\uninstall.ps1') -Arguments @('-NoPath', '-ProfileRoot', $f.Docs, '-ClinkDir', $f.Clink, '-Quiet')
+        $r.ExitCode | Should -Be 0 -Because ($r.Err + $r.Out)
+        $r.Out | Should -Match 'not installed in the usual places'
+        Test-Path (Join-Path $p.Dir 'wslbin.exe') | Should -BeTrue
+        Test-Path (Join-Path $p.Dir 'setup\install.ps1') | Should -BeTrue
+    }
+
+    It 'keeps the Clink script of a wslbin that setup did not install (a copy in a folder of its own)' {
+        $f = New-InstallFolders
+        Install-ForUninstall $Exe $f
+        $portable = Join-Path $f.Base 'portable'
+        New-Item -ItemType Directory -Path $portable, $f.Clink -Force | Out-Null
+        Copy-Item (Join-Path $f.Install 'wslbin.exe') (Join-Path $portable 'wslbin.exe')
+        $null = & (Join-Path $portable 'wslbin.exe') --init clink --dir $f.Clink
+        Test-Path (Join-Path $f.Clink 'wslbin.lua') | Should -BeTrue
+        $r = Invoke-Uninstaller $Exe $f
+        $r.ExitCode | Should -Be 0 -Because ($r.Err + $r.Out)
+        Test-Path (Join-Path $f.Clink 'wslbin.lua') | Should -BeTrue
+        Get-AppsEntry $f | Should -BeNullOrEmpty
     }
 
     It 'finds the installation by the folder it is in, when -InstallDir is not given' {
@@ -1817,7 +1940,9 @@ Describe 'the loader (site/install.ps1) in <Shell>' -ForEach $Shells {
     }
 
     It 'refuses a releases.json that is not on https' {
-        $plain = Invoke-Script -Exe $Exe -Script $script:Loader -Arguments @('-ReleasesUrl', 'http://example.com/releases.json', '-Quiet')
+        # (with folders of the test: should the check ever let it go on, nothing of the machine is touched)
+        $f = New-InstallFolders
+        $plain = Invoke-Script -Exe $Exe -Script $script:Loader -Arguments @('-ReleasesUrl', 'http://example.com/releases.json', '-Quiet', '-NoPath', '-InstallDir', $f.Install, '-ProfileRoot', $f.Docs)
         $plain.ExitCode | Should -Be 2
         ($plain.Err + $plain.Out) | Should -Match 'must be an https address'
     }
@@ -1862,17 +1987,29 @@ Describe 'the loader (site/install.ps1) in <Shell>' -ForEach $Shells {
         ($r.Err + $r.Out) | Should -Match 'schema'
     }
 
+    # (the last one has the Kelvin sign, which a match that ignores case takes for k)
     It 'refuses odd versions, scopes and repositories before it goes to the network: <Argument> <Value>' -ForEach @(
         @{ Argument = '-Version'; Value = '1/../x' }, @{ Argument = '-Version'; Value = '0.1' }, @{ Argument = '-Version'; Value = 'latest' }
         @{ Argument = '-Scope'; Value = 'Everyone' }, @{ Argument = '-Scope'; Value = 'Auto' }, @{ Argument = '-Repository'; Value = 'a/b/c' }
+        @{ Argument = '-Repository'; Value = ('quatrebi/wsl' + [char]0x212A) }
     ) {
-        $r = Invoke-Script -Exe $Exe -Script $script:Loader -Arguments @($Argument, $Value, '-Quiet')
+        # (an address that does not exist and folders of the test: should a check ever let it go on, it
+        # finds nothing to install and touches nothing of the machine)
+        $f = New-InstallFolders
+        $r = Invoke-Script -Exe $Exe -Script $script:Loader -Arguments @($Argument, $Value, '-Quiet', '-ReleasesUrl', 'https://wslbin-test.invalid/releases.json', '-NoPath', '-InstallDir', $f.Install, '-ProfileRoot', $f.Docs)
         $r.ExitCode | Should -Be 2
         ($r.Err + $r.Out) | Should -Match 'must look like|is CurrentUser or AllUsers'
     }
 
     It 'takes the version and the scope from the environment, does not close the console when it is run with iex, and leaves nothing of itself in the session' {
-        $command = "`$ErrorActionPreference = 'Continue'; Get-Content -Raw -LiteralPath '$script:Loader' | Invoke-Expression; 'still here'; " +
+        # iex takes no parameters, so a copy of the loader reads releases.json from an address that does not
+        # exist: should the check under test ever let it go on, it finds nothing to install
+        $text = [IO.File]::ReadAllText($script:Loader)
+        $changed = $text.Replace("'https://quatrebi.github.io/wslbin/releases.json'", "'https://wslbin-test.invalid/releases.json'")
+        [string]::Equals($changed, $text, [StringComparison]::Ordinal) | Should -BeFalse
+        $loader = Join-Path $global:WslbinTest.Work ('loader-' + [guid]::NewGuid().ToString('N') + '.ps1')
+        [IO.File]::WriteAllText($loader, $changed, [Text.UTF8Encoding]::new($false))
+        $command = "`$ErrorActionPreference = 'Continue'; Get-Content -Raw -LiteralPath '$loader' | Invoke-Expression; 'still here'; " +
         "'preference: ' + `$ErrorActionPreference; 'exit code: ' + `$LASTEXITCODE; " +
         "'functions: ' + @(Get-Command Get-Releases, Get-Zip, Invoke-Setup, Write-Say -ErrorAction SilentlyContinue).Count; " +
         "'variables: ' + @(Get-Variable Version, Scope, LocalReleases, SemVerPattern, release, temp, exitCode -ErrorAction SilentlyContinue).Count"
@@ -1880,6 +2017,16 @@ Describe 'the loader (site/install.ps1) in <Shell>' -ForEach $Shells {
         foreach ($a in '-NoProfile', '-Command', $command) { $psi.ArgumentList.Add($a) }
         $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = $true
         $null = $psi.Environment.Remove('PSModulePath')
+        # the environment that Invoke-Script gives a script: nothing of the machine to install into
+        $temp = Join-Path $global:WslbinTest.Work ('temp-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $temp | Out-Null
+        $psi.Environment['WSLBIN_NO_ELEVATION'] = '1'
+        $psi.Environment['TEMP'] = $temp
+        $psi.Environment['TMP'] = $temp
+        $psi.Environment['ProgramFiles'] = Join-Path $global:WslbinTest.Work 'no-program-files'
+        $psi.Environment['LOCALAPPDATA'] = Join-Path $global:WslbinTest.Work 'no-local-app-data'
+        $psi.Environment['CLAUDE_CONFIG_DIR'] = Join-Path $global:WslbinTest.Work 'no-claude-folder-here'
+        $psi.Environment['CODEX_HOME'] = Join-Path $global:WslbinTest.Work 'no-codex-folder-here'
         $psi.Environment['WSLBIN_VERSION'] = 'not-a-version'
         $psi.Environment['WSLBIN_SCOPE'] = 'CurrentUser'
         $p = [Diagnostics.Process]::Start($psi)
@@ -1914,7 +2061,7 @@ Describe 'the loader and the scripts in the package' {
         }
     }
 
-    It 'use none of what Windows PowerShell 5.1 lacks (null-conditional access, ::new)' {
+    It 'use no null-conditional access, which Windows PowerShell 5.1 lacks, and no ::new (New-Object, by convention)' {
         foreach ($relative in 'site\install.ps1', 'setup\install.ps1', 'setup\uninstall.ps1', 'setup\common.ps1', '.github\make-package.ps1') {
             $text = [IO.File]::ReadAllText((Join-Path $script:Repo $relative))
             $text | Should -Not -Match '[\w)\]]\?\.[\w\[]|\]::new\(' -Because $relative

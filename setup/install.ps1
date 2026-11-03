@@ -26,7 +26,9 @@
     the user, with no administrator rights. -Scope AllUsers is C:\Program Files\wslbin and the PATH and
     Apps entry of the machine; it asks for administrator rights (UAC). Without -Scope it is CurrentUser,
     unless wslbin is installed for all users: then that installation is updated. -InstallDir names
-    another folder; for all users, one that only administrators can change (a new one is made so). When
+    another folder; for all users, one that only administrators can change (a new one is made so). A
+    folder that holds files with the names of wslbin's (LICENSE, manifest.json, setup\) and is not an
+    installation of wslbin is refused: they belong to something else. When
     wslbin is installed in the other scope as well, this says so: of the two, the one for all users runs.
 
     The exit code is 0, or 1 when something went wrong that did not stop the install (a profile that is
@@ -140,11 +142,12 @@ function Install-Program($Manifest) {
     # The copy with administrator rights changes this folder and runs from nowhere a program of the user
     # could change: a folder that others can change is refused (a new one is made for administrators only).
     if ($script:EffectiveScope -eq 'AllUsers') { Initialize-MachineFolder $script:Dir }
+    # manifest.json goes along: it says which version is in the folder
+    $files = @($Manifest.Files) + 'manifest.json'
+    Assert-FolderIsOurs $script:Dir $files
     $wrappers = @(Get-WrapperNames $script:Dir)
     $previous = Read-InstalledManifest $script:Dir
 
-    # manifest.json goes along: it says which version is in the folder
-    $files = @($Manifest.Files) + 'manifest.json'
     $placement = Install-Files $script:Package $files $wrappers $script:Dir
     $pathAddedNow = $false
     try {

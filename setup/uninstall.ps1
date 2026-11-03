@@ -10,8 +10,9 @@
     wslbin.ini stays, unless -Purge. The script copies itself into a temporary folder and works from
     there, because it deletes the folder it is in.
 
-    Which installation: -InstallDir; or the one this script is in; or the usual places (C:\Program
-    Files\wslbin, %LOCALAPPDATA%\Programs\wslbin) and what the entries in Apps name. An installation for
+    Which installation: -InstallDir; or the one this script is in, when it is an installation (an entry
+    in Apps names it, or it is a usual place); or the usual places (C:\Program Files\wslbin,
+    %LOCALAPPDATA%\Programs\wslbin) and what the entries in Apps name. An installation for
     all users (its entry in Apps is the one of the machine) asks for administrator rights (UAC).
 
     The exit code is 0, or 1 when something could not be removed (a program that runs holds its file:
@@ -58,6 +59,18 @@ function Get-InstallationScope([string]$Dir) {
     'CurrentUser'
 }
 
+# Whether a folder is an installation that setup knows: an entry in Apps names it, or it is the usual
+# place of a scope.
+function Test-KnownInstallation([string]$Dir) {
+    $wanted = ConvertTo-ComparablePath $Dir
+    foreach ($forScope in 'AllUsers', 'CurrentUser') {
+        $entry = Get-UninstallEntry (Get-UninstallHive $forScope)
+        if ($entry -and $entry.Location -and (ConvertTo-ComparablePath $entry.Location) -eq $wanted) { return $true }
+        if ((ConvertTo-ComparablePath (Get-DefaultInstallDir $forScope)) -eq $wanted) { return $true }
+    }
+    $false
+}
+
 # The folders that hold an installation: the usual places and what the entries in Apps name, and $More.
 function Get-Installations([string[]]$More) {
     $candidates = @((Get-DefaultInstallDir 'AllUsers'), (Get-DefaultInstallDir 'CurrentUser')) + @($More)
@@ -93,7 +106,7 @@ function Remove-Installation([string]$Dir, [string]$ForScope) {
     # in any other, a link that someone put there could make this delete files elsewhere. The PATH entry
     # and the entry in Apps still go; the files are left to whoever owns them.
     if ($ForScope -eq 'AllUsers' -and (Test-Administrator)) {
-        $writers = @(Get-MachineFolderWriters $Dir (Get-TrustedSids))
+        $writers = @(Get-MachineFolderWriters $Dir)
         if ($writers.Count -gt 0) {
             Write-Problem "$Dir can be changed by others than administrators ($(@($writers | Select-Object -First 3) -join '; ')), so its files are not deleted with administrator rights: delete the folder yourself. Its PATH entry and its entry in Apps are removed."
             $script:Problems++
@@ -122,7 +135,8 @@ function Remove-Installation([string]$Dir, [string]$ForScope) {
         Remove-Item -LiteralPath $exe -Force -ErrorAction Stop
     }
     catch {
-        # a terminal that runs a wrapper or wslbin itself: the rest of the uninstall still goes on
+        # a terminal that runs a wrapper or wslbin itself: this installation stays (without its PATH entry,
+        # which is out already), so that a run after that program has ended finds it and ends it
         Write-Problem "Could not remove ${exe}: $($_.Exception.Message) Close the programs that use it and run this again."
         $script:Problems++
         return
@@ -132,13 +146,20 @@ function Remove-Installation([string]$Dir, [string]$ForScope) {
     }
     Remove-AsideFiles $Dir ($files + $wrappers)
     $setup = Join-Path $Dir 'setup'
-    if ((Test-Path -LiteralPath $setup) -and -not (Get-ChildItem -LiteralPath $setup -Force)) { Remove-Item -LiteralPath $setup -Force }
+    if ((Test-Path -LiteralPath $setup) -and -not (Get-ChildItem -LiteralPath $setup -Force)) { Remove-EmptyFolder $setup }
     if (Remove-UninstallEntry $hive $Dir) { Write-Step 'removed the entry in Settings > Apps' }
 
     $ini = Join-Path $Dir 'wslbin.ini'
     if ((Test-Path -LiteralPath $ini) -and $Purge) { Remove-Item -LiteralPath $ini -Force }
     if (Test-Path -LiteralPath $ini) { Write-Step "kept $ini (your settings; -Purge deletes it)" }
-    elseif (-not (Get-ChildItem -LiteralPath $Dir -Force)) { Remove-Item -LiteralPath $Dir -Force }
+    elseif (-not (Get-ChildItem -LiteralPath $Dir -Force)) { Remove-EmptyFolder $Dir }
+}
+
+# An empty folder of the installation. One that a program is in (a terminal whose current folder it is)
+# cannot be deleted; wslbin is gone from it all the same, so that is no reason to stop the uninstall.
+function Remove-EmptyFolder([string]$Folder) {
+    try { Remove-Item -LiteralPath $Folder -Force -ErrorAction Stop }
+    catch { Write-Step "left the empty folder $Folder (a program is in it): delete it yourself" }
 }
 
 # PATH: only the scope of the installation, and only when the installer added the folder (it may have
@@ -185,8 +206,10 @@ function Get-UninstallScriptsToCheck([string]$Dir) {
 }
 
 # The hooks in the profiles and the Clink script go, unless they belong to an installation that is still
-# there ($Left): there is one of each, and it names the wslbin.exe that it runs.
-function Remove-Hooks([string[]]$Left) {
+# there ($Left): there is one of each, and it names the wslbin.exe that it runs. The Clink script may
+# also be one that a copy of wslbin outside any installation wrote ("wslbin --init clink" of a portable
+# copy): it stays while that wslbin.exe is there and is not one of the installations removed ($Removed).
+function Remove-Hooks([string[]]$Left, [string[]]$Removed) {
     foreach ($profilePath in Get-ProfilePaths) {
         try {
             $block = Get-MarkedBlock $profilePath
@@ -202,12 +225,22 @@ function Remove-Hooks([string[]]$Left) {
 
     # the Clink script has a first line that says whose it is
     foreach ($folder in Get-ClinkScriptFolders) {
-        $script = Join-Path $folder 'wslbin.lua'
-        $exe = Get-ClinkScriptExe $script
+        $luaFile = Join-Path $folder 'wslbin.lua'
+        $exe = Get-ClinkScriptExe $luaFile
         if ($null -eq $exe) { continue }
-        if (Test-HookNames $exe $Left -Clink) { Write-Step "kept ${script}: it runs a wslbin that is still installed"; continue }
-        Remove-Item -LiteralPath $script -Force
-        Write-Step "removed $script"
+        if (Test-HookNames $exe $Left -Clink) { Write-Step "kept ${luaFile}: it runs a wslbin that is still installed"; continue }
+        if ($exe -and (Test-Path -LiteralPath $exe -PathType Leaf) -and -not (Test-HookNames $exe $Removed -Clink)) {
+            Write-Step "kept ${luaFile}: it runs $exe, which is not an installation that was removed"
+            continue
+        }
+        try {
+            Remove-Item -LiteralPath $luaFile -Force -ErrorAction Stop
+            Write-Step "removed $luaFile"
+        }
+        catch {
+            Write-Problem "Could not remove ${luaFile}: $($_.Exception.Message)"
+            $script:Problems++
+        }
     }
 }
 
@@ -253,7 +286,7 @@ function Uninstall-Wslbin {
         foreach ($dir in $user) { Remove-Installation $dir 'CurrentUser' }
 
         $left = @($all | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'wslbin.exe') })
-        Remove-Hooks $left
+        Remove-Hooks $left $targets
 
         if ($helper) {
             if ($left.Count -gt 0) { Write-Step "kept the block for AI agents: wslbin is still in $($left -join ', ')" }
@@ -285,7 +318,9 @@ $ClinkDir = ConvertTo-FullPath $ClinkDir
 if (-not $FromTemp -and -not $Elevated) {
     $here = Split-Path -Parent $PSScriptRoot
     $dir = $InstallDir
-    if (-not $dir -and (Test-Path -LiteralPath (Join-Path $here 'wslbin.exe'))) { $dir = $here }
+    # the folder this script is in, when it is an installation; an unpacked release zip holds wslbin.exe and
+    # this script too, and it is no installation (the usual places and the entries in Apps are looked at then)
+    if (-not $dir -and (Test-Path -LiteralPath (Join-Path $here 'wslbin.exe')) -and (Test-KnownInstallation $here)) { $dir = $here }
     $temp = Join-Path (Get-ScratchRoot) ('wslbin-uninstall-script-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $temp | Out-Null
     $code = 2
@@ -296,7 +331,9 @@ if (-not $FromTemp -and -not $Elevated) {
         $arguments += Get-ParameterTokens @('Quiet', 'Purge', 'NoPath', 'ProfileRoot', 'ClinkDir', 'UninstallKey')
         if ($dir) { $arguments += '-InstallDir'; $arguments += (ConvertTo-CommandLineArgument $dir) }
         $arguments += '-FromTemp'
-        $process = Start-Process -FilePath (Get-PowerShellPath) -ArgumentList ($arguments -join ' ') -Wait -PassThru -NoNewWindow
+        # (in the temporary folder: the current folder of a process cannot be deleted, and the caller's may
+        # well be the install folder)
+        $process = Start-Process -FilePath (Get-PowerShellPath) -ArgumentList ($arguments -join ' ') -Wait -PassThru -NoNewWindow -WorkingDirectory $temp
         $code = $process.ExitCode
     }
     finally {

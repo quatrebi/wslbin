@@ -85,6 +85,13 @@ function Get-PowerShellPath {
     Join-Path $PSHOME 'powershell.exe'
 }
 
+# The PowerShell that the copy with administrator rights runs in: Windows PowerShell of the system folder,
+# which only administrators can change. Not the one of $PSHOME: a PowerShell 7 unpacked under the profile
+# of the user is a program that the user, and any program of the user, can change.
+function Get-ElevatedPowerShellPath {
+    Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+}
+
 # ---- PATH ---------------------------------------------------------------------------------------
 
 # The registry key that holds Path for a scope, as a hive and a sub key.
@@ -379,6 +386,9 @@ function Get-ParameterTokens([string[]]$Names, [switch]$PowerShell) {
 # runs $Script with $Arguments (PowerShell literals) from there. The folder is deleted at the end. When
 # that fails, the window stays open a while so that its messages can be read (not with -NoPause: a
 # PowerShell that has the rights already runs it in its own console). $StageRoot is for the tests.
+# The first line sets the module path to the modules of that PowerShell only, before any command runs:
+# PowerShell loads a module for a command it does not know yet from the first folder of PSModulePath that
+# has one, and the folders of the user come first (a module there could stand in for Get-FileHash).
 function Get-ElevatedCommand([object[]]$Files, [string]$Script, [string[]]$Arguments, [string]$StageRoot, [switch]$NoPause) {
     $root = "[Environment]::GetFolderPath('ProgramFiles')"
     if ($StageRoot) { $root = ConvertTo-PowerShellLiteral $StageRoot }
@@ -386,6 +396,7 @@ function Get-ElevatedCommand([object[]]$Files, [string]$Script, [string[]]$Argum
             '@(' + (ConvertTo-PowerShellLiteral $_.Source) + ', ' + (ConvertTo-PowerShellLiteral $_.Path) + ', ' + (ConvertTo-PowerShellLiteral $_.Sha256) + ')'
         }) -join ', '
     $code = @'
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
 $ErrorActionPreference = 'Stop'
 $code = 2
 $stage = $null
@@ -435,7 +446,7 @@ function Invoke-Elevated([object[]]$Files, [string]$Script, [string[]]$Arguments
     # for scripts and tests: never put the UAC question on the screen
     if (-not $admin -and $env:WSLBIN_NO_ELEVATION -eq '1') { return $null }
     $start = @{
-        FilePath         = Get-PowerShellPath
+        FilePath         = Get-ElevatedPowerShellPath
         ArgumentList     = Get-ElevatedArgumentLine (Get-ElevatedCommand $Files $Script $Arguments -NoPause:$admin)
         Wait             = $true
         PassThru         = $true
@@ -517,7 +528,8 @@ function Test-HookNames([string]$Hook, [string[]]$Dirs, [switch]$Clink) {
 
 # Accounts that may change what an installation for all users is made of: Administrators, SYSTEM,
 # TrustedInstaller, and CREATOR OWNER (the rights that whoever makes a file there gets on it: in such a
-# folder that is one of the others).
+# folder that is one of the others). Not the account that installs, even with administrator rights: with
+# UAC its programs that run without those rights are the same account.
 $TrustedSids = @('S-1-5-32-544', 'S-1-5-18', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464', 'S-1-3-0')
 
 # Rights that change a folder or what is in it: write and append data (add a file, a folder), write
@@ -576,20 +588,15 @@ function Get-MachineFolderWriters([string]$Dir, [string[]]$Trusted = $TrustedSid
     $found.ToArray()
 }
 
-# The accounts trusted with an installation for all users: administrators, and this account when it runs
-# with administrator rights (it is one of them then).
-function Get-TrustedSids {
-    $sids = @($TrustedSids)
-    if (Test-Administrator) { $sids += [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
-    $sids
-}
-
 # The rights of a new folder of an installation for all users: Administrators and SYSTEM may do anything,
 # Users may read and run, and nothing comes from the folder above (C:\ lets every account change what is
-# in a folder made in it).
+# in a folder made in it). With administrator rights the owner is Administrators, not the account that
+# installs: that account is not trusted (its programs that run without the rights are the same account),
+# and an owner may change the rights. Without them (the tests) the owner cannot be set to another.
 function New-MachineFolderSecurity {
     $security = New-Object Security.AccessControl.DirectorySecurity
     $security.SetAccessRuleProtection($true, $false)
+    if (Test-Administrator) { $security.SetOwner((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544')) }
     $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
     $none = [Security.AccessControl.PropagationFlags]::None
     $allow = [Security.AccessControl.AccessControlType]::Allow
@@ -615,7 +622,7 @@ function New-MachineFolder([string]$Dir) {
 # administrators can change. A new one is made so; one that is there already is refused when it is not.
 function Initialize-MachineFolder([string]$Dir) {
     if (-not (Test-Path -LiteralPath $Dir)) { New-MachineFolder $Dir }
-    $writers = @(Get-MachineFolderWriters $Dir (Get-TrustedSids))
+    $writers = @(Get-MachineFolderWriters $Dir)
     if ($writers.Count -gt 0) {
         $shown = @($writers | Select-Object -First 3) -join '; '
         if ($writers.Count -gt 3) { $shown += '; ...' }
@@ -745,9 +752,28 @@ function Read-InstalledManifest([string]$Dir) {
                 $relative = [string]$entry.path
                 if (Test-PackagePath $relative) { $relative.Replace('/', '\') }
             })
+        # a manifest.json of another program (in a folder that is not wslbin's own) names its files, which
+        # are not wslbin's to delete
+        if ($manifest.schema -ne 1 -or $files -notcontains 'wslbin.exe') { return $null }
         [pscustomobject]@{ Version = [string]$manifest.version; Files = $files }
     }
     catch { $null }
+}
+
+# Refuses to install into a folder that holds files with the names of wslbin's ($Files, relative) and is
+# not an installation of wslbin (no manifest.json of wslbin, no wslbin.exe or wrapper that is wslbin): they
+# belong to something else, which the install would overwrite and the uninstall delete. wslbin.exe itself
+# is wslbin's by its name: in a folder whose install was cut short it is replaced.
+function Assert-FolderIsOurs([string]$Dir, [string[]]$Files) {
+    if (Read-InstalledManifest $Dir) { return }
+    if (Test-WrapperFile (Join-Path $Dir 'wslbin.exe')) { return }
+    if (@(Get-WrapperNames $Dir).Count -gt 0) { return }
+    foreach ($relative in $Files) {
+        if ($relative -eq 'wslbin.exe') { continue }
+        if (Test-Path -LiteralPath (Join-Path $Dir $relative)) {
+            throw "$Dir holds $relative, which is not wslbin's: install into a folder of its own. Nothing was installed."
+        }
+    }
 }
 
 # The files that an installation in $Dir consists of, relative: what its manifest.json names (when it
@@ -821,11 +847,17 @@ function Set-UninstallEntry($Hive, [string]$Dir, [string]$Version, [string[]]$Fi
     finally { $key.Close() }
 }
 
-# Deletes the entry, when it is the one of this folder. Returns whether it was there.
+# Deletes the entry, when it is the one of this folder. Returns whether it was there. Only a key that is
+# an entry of wslbin (its DisplayName says so) is deleted, with all that is under it: -UninstallKey names
+# any key.
 function Remove-UninstallEntry($Hive, [string]$Dir) {
     $entry = Get-UninstallEntry $Hive
     if (-not $entry) { return $false }
     if ($entry.Location -and (ConvertTo-ComparablePath $entry.Location) -ne (ConvertTo-ComparablePath $Dir)) { return $false }
+    $key = $Hive.OpenSubKey((Get-UninstallKeyPath))
+    try { $name = [string]$key.GetValue('DisplayName', '') }
+    finally { $key.Close() }
+    if ($name -cne 'wslbin') { return $false }
     $Hive.DeleteSubKeyTree((Get-UninstallKeyPath), $false)
     $true
 }

@@ -10,9 +10,10 @@
 #   & ([scriptblock]::Create((irm https://quatrebi.github.io/wslbin/install.ps1))) -Version 0.1.7 -Scope AllUsers
 #
 # What it does: reads releases.json from the site (the versions, the address and the SHA256 of each zip),
-# downloads the zip from GitHub Releases into a temporary folder, checks its SHA256 (the hash comes from
-# the site, the file from GitHub: two places), with -VerifyAttestation also the attestation of GitHub (needs
-# the gh program), unpacks it (an entry that would leave the folder is refused), runs setup\install.ps1 from
+# downloads the zip from GitHub Releases into a temporary folder, checks its SHA256 against releases.json
+# (the hash that the release published with the zip, which the site checked against GitHub's digest of the
+# file: that catches a damaged or replaced download), with -VerifyAttestation also that the release workflow
+# of the repository built it from main (needs the gh program; only this proves where it comes from), unpacks it (an entry that would leave the folder is refused), runs setup\install.ps1 from
 # it in a PowerShell of its own (so that the execution policy of this one does not stop it) and deletes the
 # temporary folder. Read this file before you run it: it is short. Everything is in one script block, so
 # that "iex" leaves nothing of it in the session (no variables, no functions, no preferences); the exit
@@ -210,7 +211,7 @@
         if ($Version.StartsWith('v')) { $Version = $Version.Substring(1) }
         if ($Version -and -not [regex]::IsMatch($Version, $SemVerPattern)) { throw "-Version must look like 0.1.7; got '$Version'." }
         if ($Scope -and $Scope -notin 'AllUsers', 'CurrentUser') { throw "-Scope is CurrentUser or AllUsers; got '$Scope'." }
-        if ($Repository -notmatch '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\z') { throw "-Repository must look like <owner>/<name>; got '$Repository'." }
+        if (-not [regex]::IsMatch($Repository, '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\z')) { throw "-Repository must look like <owner>/<name>; got '$Repository'." }
 
         $releases = Get-Releases
         $release = $null
