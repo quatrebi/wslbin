@@ -38,7 +38,7 @@ irm https://quatrebi.github.io/wslbin/install.ps1 | iex
 ```
 
 That downloads the latest release, checks it, and runs the installer that is in it, in a PowerShell of its
-own (so it works whatever the execution policy of yours; the exit code is in ``, and nothing of
+own (so it works whatever the execution policy of yours; the exit code is in `$LASTEXITCODE`, and nothing of
 the script stays in your session). In a console it asks for what you did not give (for whom to install,
 whether to hook Tab completion in); with `-Quiet` it asks nothing. Parameters go to a script block:
 
@@ -49,21 +49,25 @@ whether to hook Tab completion in); with `-Quiet` it asks nothing. Parameters go
 `WSLBIN_VERSION` and `WSLBIN_SCOPE` in the environment do the same for the first line. Read the script
 before you run it, if you like: [`site/install.ps1`](site/install.ps1) is short. It reads the list of
 releases from the site (`releases.json`: the address and the SHA256 of each zip), downloads the zip from
-GitHub Releases, checks the SHA256 (the hash comes from the site and the file from GitHub), with
-`-VerifyAttestation` also where GitHub says it was built (needs the [gh](https://cli.github.com) program),
-unpacks it into a temporary folder and runs `setup\install.ps1` from it. The zip must be exactly
-`wslbin-<version>-win-x64.zip` of the release `v<version>` of this repository.
+GitHub Releases, checks its SHA256 against `releases.json` (the hash that the release published with the
+zip, which the site checked against GitHub's digest of the file: that catches a damaged or replaced
+download), with `-VerifyAttestation` also that the zip was built by the release workflow of this
+repository from `main` (needs the [gh](https://cli.github.com) program; only this proves where the zip
+comes from), unpacks it into a temporary folder and runs `setup\install.ps1` from it. The zip must be
+exactly `wslbin-<version>-win-x64.zip` of the release `v<version>` of this repository.
 
 The zip (`wslbin-<version>-win-x64.zip` on the [releases page](https://github.com/quatrebi/wslbin/releases),
 with its `.sha256` and `SHA256SUMS.txt`) holds `wslbin.exe`, `LICENSE`, `manifest.json` (every file with
-its SHA256) and `setup\install.ps1`, `setup\uninstall.ps1`: unpack it and run
+its SHA256) and `setup\install.ps1`, `setup\uninstall.ps1` and `setup\common.ps1`: unpack it and run
 `.\setup\install.ps1 -Link make,rsync,dig -Completion pwsh,clink` to install without a network.
 
 By default wslbin is installed for you: `%LOCALAPPDATA%\Programs\wslbin`, the PATH of the user, no
 administrator rights, and your `wslbin.ini` and `wslbin --link` need none either. When wslbin is installed
 for all users already, the default is to update that installation. `-Scope AllUsers` puts it in
 `C:\Program Files\wslbin` and the PATH of the machine, and asks for administrator rights (UAC); another
-folder (`-InstallDir`) must be one that only administrators can change, and a new one is made so. The copy
+folder (`-InstallDir`) must be one that only administrators can change, and a new one is made so. A folder
+that holds files with the names of wslbin's (`LICENSE`, `manifest.json`, `setup\`) and is not an
+installation of wslbin is refused in either scope: they belong to something else. The copy
 that has the rights installs the program and nothing more, from a folder that only administrators can
 write to, after it has checked the SHA256 of every file again; its window shows what it did. It runs no
 program from the install folder. This protects against changes made after the check; what you run the
@@ -82,7 +86,8 @@ deleted at once or at the next run. Files that the new version no longer has are
 `wslbin.ini` is not touched. A scope holds one installation: a second one in another folder is refused.
 
 **Remove**: Settings > Apps > wslbin > Uninstall, or `setup\uninstall.ps1` in the install folder
-(`-Quiet` asks nothing, `-Purge` deletes `wslbin.ini` too). It takes out the wrappers, the PATH entry
+(`-Quiet` asks nothing, `-Purge` deletes `wslbin.ini` too; run from an unpacked zip, it looks for the
+installation in the usual places and leaves the zip's files alone). It takes out the wrappers, the PATH entry
 (only if the installer added it), the files, the entry in Apps, the hooks in the profiles and Clink (those
 of an installation that stays are kept), and the block for AI agents. While a wrapper runs, nothing is
 removed but the wrappers that can be: close it and run the uninstall again. The installer writes nothing
@@ -139,8 +144,9 @@ out again. Agents that work on wslbin itself: read [`AGENTS.md`](AGENTS.md).
 ## Build and contribute
 
 Needs the [.NET SDK 10](https://dotnet.microsoft.com/download), the C++ build tools of Visual Studio
-(the workload "Desktop development with C++") and access to nuget.org until the NuGet packages of the
-AOT compiler and of the runtime are in the cache (the first build, and after an update of the SDK).
+(the workload "Desktop development with C++"), git 2.31 or later (the version is worked out from its
+history) and access to nuget.org until the NuGet packages of the AOT compiler and of the runtime are in
+the cache (the first build, and after an update of the SDK).
 The program is published as Native AOT: one self-contained `.exe` that every wrapper copies.
 
 ```powershell
