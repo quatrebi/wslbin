@@ -12,7 +12,9 @@ $program = $env:PROGRAM
 if (-not $program) { $program = Join-Path $PSScriptRoot '..\bin\wslbin.exe' }
 if (-not (Test-Path -LiteralPath $program)) { throw "The program $program does not exist." }
 
-$reported = & $program --version
-if ($reported -ne "wslbin $expected") {
-    throw "Expected 'wslbin $expected', but the program says '$reported'."
+# exactly one line, exactly that text (the case too), and exit code 0
+$reported = @(& $program --version)
+if ($LASTEXITCODE -ne 0) { throw "$program --version ended with exit code $LASTEXITCODE." }
+if ($reported.Count -ne 1 -or $reported[0] -cne "wslbin $expected") {
+    throw "Expected 'wslbin $expected', but the program says '$($reported -join ' | ')'."
 }

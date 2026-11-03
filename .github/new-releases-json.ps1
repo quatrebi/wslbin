@@ -81,13 +81,20 @@ foreach ($release in $releases) {
     # digest that GitHub computes of the asset as it is now. Both must be there and agree, so that a zip
     # that was replaced after the release (by anything that may write to the repository) is not published
     # with the hash of the replacement.
+    # An address that is not https is a fact of that release, which is skipped. A download that fails is not:
+    # the script stops and writes nothing, so that the site keeps the releases.json that it has, rather than
+    # one without that release (or with an older "latest").
     $hash = $null
     $sums = $assets | Where-Object { $_.name -ceq "$zipName.sha256" } | Select-Object -First 1
     if ($sums) {
-        try {
-            if ((Get-AssetText ([string]$sums.browser_download_url)) -match '(?m)^\s*([0-9a-fA-F]{64})\b') { $hash = $Matches[1].ToLowerInvariant() }
+        $sumsUrl = [string]$sums.browser_download_url
+        if (-not ($InputFile -and $sumsUrl -match '^file:') -and $sumsUrl -notmatch '^https://') {
+            Write-Warning "$tag is skipped: the address of $zipName.sha256 is not https."
+            continue
         }
-        catch { Write-Warning "$tag is skipped: the hash could not be read ($($_.Exception.Message))."; continue }
+        try { $sumsText = Get-AssetText $sumsUrl }
+        catch { throw "The hash of $tag could not be read from ${sumsUrl}: $($_.Exception.Message) Nothing was written." }
+        if ($sumsText -match '(?m)^\s*([0-9a-fA-F]{64})\b') { $hash = $Matches[1].ToLowerInvariant() }
     }
     if (-not $hash) { Write-Warning "$tag is skipped: it has no $zipName.sha256 with a SHA256 in it."; continue }
     $digest = $zip.PSObject.Properties['digest']

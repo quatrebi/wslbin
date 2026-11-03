@@ -206,7 +206,8 @@ Describe 'build.ps1' {
         finally { Pop-Location }
         (& $exe --version) | Should -BeExactly 'wslbin 3.3.0-several.1'
     }
-    It 'refuses a -Main that is not the name of a class: <_>' -ForEach @('X;Foo=bar', 'two words', 'a"b', '1Start') {
+    # (the last one has the Kelvin sign, which a match that ignores case takes for k)
+    It 'refuses a -Main that is not the name of a class: <_>' -ForEach @('X;Foo=bar', 'two words', 'a"b', '1Start', ('Wslbin.Fa' + [char]0x212A + 'eWslEntry')) {
         { & (Join-Path $global:WslbinTest.Repo 'build.ps1') -Output (Join-Path $global:WslbinTest.Work 'nomain\wslbin.exe') -Main $_ 6>$null } | Should -Throw '*-Main*'
     }
     It 'refuses a -Main that ends with a line break' {

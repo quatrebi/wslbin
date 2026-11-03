@@ -276,6 +276,28 @@ Describe 'Get-WslbinVersion' {
             # c1 and the commit on main, two on the branch, and the merge itself
             Get-WslbinVersion -Repo $m -Kind release | Should -BeExactly '0.1.5'
         }
+        It 'counts from a merge that brings a new value in by resolving a conflict (git log -G looks at no merge by itself)' {
+            $g = New-VersionRepo '0.1'
+            $null = Invoke-FixtureGit $g @('switch', '-q', '-c', 'side')
+            Set-VersionFile $g '0.2'
+            Save-VersionFile $g 'side raises to 0.2'
+            $null = Invoke-FixtureGit $g @('switch', '-q', 'main')
+            Set-VersionFile $g '0.3'
+            Save-VersionFile $g 'main raises to 0.3'
+            # the merge stops at the conflict on the line, which is resolved to a value that neither branch had
+            try { $null = Invoke-FixtureGit $g @('merge', '-q', '--no-edit', 'side') } catch { }
+            Set-VersionFile $g '0.4'
+            Save-VersionFile $g 'merge side, resolved to 0.4'
+            Get-WslbinVersion -Repo $g -Kind release | Should -BeExactly '0.4.0'
+            Add-FixtureCommits $g 1
+            Get-WslbinVersion -Repo $g -Kind release | Should -BeExactly '0.4.1'
+        }
+        It 'counts from the first commit also when git is set not to show the root commit (log.showRoot)' {
+            $s = New-VersionRepo '0.1'
+            Add-FixtureCommits $s 2
+            $null = Invoke-FixtureGit $s @('config', 'log.showRoot', 'false')
+            Get-WslbinVersion -Repo $s -Kind release | Should -BeExactly '0.1.2'
+        }
     }
 
     Context 'what the build adds' {

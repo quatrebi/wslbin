@@ -130,8 +130,11 @@ function Get-WslbinVersion {
     # send PATCH back to 0, and a release would have a lower version than an earlier one.
     $pattern = '<VersionPrefix>[[:space:]]*' + ($majorMinor -replace '\.', '\.') + '[[:space:]]*</VersionPrefix>'
     # --topo-order: "oldest" is the one furthest up the history, not the one with the oldest date (a clock
-    # that was wrong); the other options keep the git configuration of the person out of the output
-    $found = Invoke-Git $Repo @('-c', 'log.follow=false', 'log', '--reverse', '--topo-order', '--no-show-signature', '--format=%H', "-G$pattern", $full.Out, '--', 'wslbin.csproj')
+    # that was wrong). --diff-merges=first-parent: -G looks at no merge commit by itself, and a merge that
+    # resolves a conflict to a new value is where that value appears (git 2.31 or later). The other options
+    # keep the git configuration of the person out of the output (log.showRoot=false would hide the first
+    # commit's change, so a later commit would be taken for the one that sets the value).
+    $found = Invoke-Git $Repo @('-c', 'log.follow=false', '-c', 'log.showRoot=true', 'log', '--reverse', '--topo-order', '--diff-merges=first-parent', '--no-patch', '--no-show-signature', '--format=%H', "-G$pattern", $full.Out, '--', 'wslbin.csproj')
     if ($found.Code -ne 0) { throw "git log failed in ${Repo}: $($found.Err)" }
     $base = ($found.Out -split "`n")[0]
     if (-not $base) {

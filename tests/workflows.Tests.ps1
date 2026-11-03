@@ -75,6 +75,16 @@ Describe 'check-version.ps1' {
         $r.ExitCode | Should -Not -Be 0
         $r.Err | Should -Match 'does not exist'
     }
+    It 'refuses an answer in another case, of more than one line, or with an exit code: <Name>' -ForEach @(
+        @{ Name = 'case'; Body = 'echo WSLBIN 5.6.7' }
+        @{ Name = 'two lines'; Body = "echo wslbin 5.6.7`r`necho." }
+        @{ Name = 'exit code'; Body = "echo wslbin 5.6.7`r`nexit /b 3" }
+    ) {
+        $fake = Join-Path $script:Work ('fake-' + [guid]::NewGuid().ToString('N') + '.cmd')
+        [IO.File]::WriteAllText($fake, "@echo off`r`n$Body`r`n")
+        $r = Invoke-CheckVersion -Expected '5.6.7' -Program $fake
+        $r.ExitCode | Should -Not -Be 0
+    }
 }
 
 Describe 'new-releases-json.ps1' {
@@ -203,6 +213,14 @@ Describe 'new-releases-json.ps1' {
         $r.ExitCode | Should -Be 0 -Because $r.Err
         $r.Json.latest | Should -BeExactly '1.0.0'
         @($r.Json.releases).Count | Should -Be 1
+    }
+    It 'stops and writes nothing when a hash cannot be downloaded (the site keeps what it has)' {
+        $missing = New-FakeAsset 'wslbin-1.0.0-win-x64.zip.sha256' -Url ([Uri](Join-Path $script:Work ('no-such-' + [guid]::NewGuid().ToString('N') + '.sha256'))).AbsoluteUri
+        $one = New-FakeRelease 'v1.0.0' -Assets @((New-FakeAsset 'wslbin-1.0.0-win-x64.zip'), $missing)
+        $r = Invoke-ReleasesScript -Releases @($one)
+        $r.ExitCode | Should -Not -Be 0
+        Test-Path $r.Output | Should -BeFalse
+        ($r.Out + $r.Err) | Should -Match 'v1\.0\.0'
     }
     It 'does not fetch a hash from an address that is not https: such a release is skipped with a warning' {
         $text = $script:Run.Out + "`n" + $script:Run.Err

@@ -29,7 +29,7 @@ else {
     $Version = Get-WslbinVersion -Repo $PSScriptRoot -Kind local
 }
 # these become properties of MSBuild on its command line, where ; % $ @ and ' mean something
-if ($Main -and $Main -notmatch '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*\z') {
+if ($Main -and -not [regex]::IsMatch($Main, '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*\z')) {
     throw "-Main must be the name of a class, like Wslbin.FakeWslEntry; got '$Main'."
 }
 $extra = @($ExtraSource | ForEach-Object {
