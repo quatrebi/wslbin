@@ -125,7 +125,9 @@ internal static class WrapperCommands
 
     // Makes one change in dir. "Access denied" in a folder that this user cannot write to means that
     // it needs administrator rights (denied); it is also what a running program or a read-only file
-    // gives, and that is not a matter of rights (failed).
+    // gives, and that is not a matter of rights (failed). The copy with administrator rights takes only
+    // valid wrapper names (it repeats every check), so a wrapper file that someone renamed to anything
+    // else is left to the user.
     static void Change(string dir, string name, Action change, List<string> denied, List<string> failed)
     {
         try
@@ -135,6 +137,9 @@ internal static class WrapperCommands
         catch (UnauthorizedAccessException ex)
         {
             if (Wrappers.CanWrite(dir)) failed.Add($"{name}: {ex.Message}");
+            else if (!Wrappers.IsValidName(name))
+                failed.Add($"{name}: {dir} needs administrator rights, and wslbin hands only valid wrapper names to its " +
+                           $"copy with those rights: rename or delete {Wrappers.PathOf(dir, name)} yourself");
             else denied.Add(name);
         }
         catch (IOException ex)

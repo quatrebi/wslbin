@@ -28,7 +28,7 @@ BeforeAll {
     # not taken from the program: a text that names an option the program has lost must fail.
     $script:KnownOptions = @('--help', '--version', '--link', '--unlink', '--list', '--doctor', '--init', '--ai-context',
                              '--install-ai-context', '--raw', '--sh', '--explain', '--all', '--dry-run', '--names', '--native-fallback',
-                             '--dir', '--remove', '--claude-dir', '--codex-dir', '--yes', '--complete')
+                             '--dir', '--remove', '--claude', '--codex', '--claude-dir', '--codex-dir', '--yes', '--complete')
 
     function Read-Doc([string]$lang, [string]$file) {
         ([IO.File]::ReadAllText((Join-Path $script:Repo "docs\$lang\$file"), [Text.UTF8Encoding]::new($false))).Replace("`r`n", "`n")
@@ -203,6 +203,11 @@ Describe 'the READMEs' {
     It 'describe the same sections in both languages' {
         $headings = { param($t) @([regex]::Matches($t, '(?m)^## ').Count) }
         (& $headings (Read-Readme 'README.ru.md')) | Should -Be (& $headings (Read-Readme 'README.md'))
+    }
+
+    # (`$LASTEXITCODE` once came out as ``: PowerShell had put its own variable in, which was empty)
+    It '<File> has no empty piece of code' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }) {
+        [regex]::Matches((Read-Readme $File), '(?<!`)``(?!`)').Count | Should -Be 0
     }
 
     It '<File> opens every code block with three backticks and closes it' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }) {
@@ -386,7 +391,32 @@ Describe 'wslbin --install-ai-context' {
     It 'changes nothing with --dry-run' {
         $c = New-AgentHome
         $r = Install-Context @('--claude-dir', $c, '--claude', '--dry-run')
-        $r.Out | Should -Match 'would create'
+        $r.Out | Should -Match 'would create '
+        $r.Out | Should -Not -Match 'would (created|updated|removed|added)'
+        @(Get-ChildItem $c -Recurse).Count | Should -Be 0
+    }
+
+    It 'says what it would do in a dry run of an update and of --remove, in plain words' {
+        $c = New-AgentHome
+        [IO.File]::WriteAllText((Join-Path $c 'CLAUDE.md'), "# Mine`n")
+        $null = Install-Context @('--claude-dir', $c, '--claude')
+        $before = (Get-FileHash (Join-Path $c 'CLAUDE.md')).Hash
+        $remove = Install-Context @('--claude-dir', $c, '--claude', '--remove', '--dry-run')
+        $remove.Out | Should -Match 'would remove the wslbin block from'
+        $remove.Out | Should -Match 'would remove .*SKILL\.md'
+        $remove.Out | Should -Not -Match 'would (created|updated|removed|added)'
+        (Get-FileHash (Join-Path $c 'CLAUDE.md')).Hash | Should -Be $before
+        Test-Path (Join-Path $c 'skills\wslbin\SKILL.md') | Should -BeTrue
+    }
+
+    It 'refuses a folder for the agent that the other option leaves out: <Only> <Folder>' -ForEach @(
+        @{ Only = '--codex'; Folder = '--claude-dir' }
+        @{ Only = '--claude'; Folder = '--codex-dir' }
+    ) {
+        $c = New-AgentHome
+        $r = Install-Context @($Only, $Folder, $c)
+        $r.ExitCode | Should -Be 125
+        $r.Err | Should -Match ([regex]::Escape($Folder) + ' names the folder of .*, which ' + [regex]::Escape($Only) + ' leaves out')
         @(Get-ChildItem $c -Recurse).Count | Should -Be 0
     }
 
@@ -432,7 +462,8 @@ Describe 'wslbin --install-ai-context' {
     }
 
     It 'does not touch the real folders of the agents when no folder is named (the helper points the variables at nothing)' {
-        $r = Install-Context @()
+        # (and the home folder at one of the test: were the variables ever ignored, ~/.claude is not the real one)
+        $r = Install-Context @() -Env @{ USERPROFILE = (New-AgentHome) }
         $r.ExitCode | Should -Be 0
         $r.Out | Should -Match 'Claude Code: skipped'
         $r.Out | Should -Match 'Codex: skipped'

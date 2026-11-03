@@ -347,6 +347,88 @@ Describe '--doctor and other copies of wslbin' {
     }
 }
 
+Describe 'the environment of wsl.exe' {
+    It 'lists the variables of pass_env in WSLENV, with /p only on a path, after those of the user, and changes nothing else' {
+        $wsl = New-FakeWsl
+        $wsl.APP_DIR = 'C:\x'
+        $wsl.APP_TEXT = 'hello'
+        $wsl.WSLENV = 'MINE/u'
+        $r = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'printf' -Env $wsl -Ini "pass_env = APP_*`n" -Arguments @('x')
+        $r.ExitCode | Should -Be 0 -Because $r.Err
+        $seen = [IO.File]::ReadAllText((Join-Path $wsl.FAKE_WSL_DIR 'env.bin'), [Text.UTF8Encoding]::new($false)) -split "`0"
+        $seen | Should -Contain 'WSLENV=MINE/u:APP_DIR/p:APP_TEXT'
+        # wsl.exe reads these itself: with SystemRoot=/mnt/c/Windows it does not even start
+        $seen | Should -Contain "SystemRoot=$env:SystemRoot"
+        $seen | Should -Contain "TEMP=$env:TEMP"
+    }
+}
+
+Describe 'the command line of wsl.exe, read back as bash reads it (Git Bash)' -Skip:$NoGitBash {
+    # --wslbin-explain shows the bash command before it is put on the command line of wsl.exe. Here the
+    # stand-in wsl.exe takes that command line apart (args.bin), and Git Bash runs
+    # "bash -c <script> <positional parameters>" from it, as wsl.exe would in WSL: every argument must
+    # come out as it went in (Launcher.AppendWindowsArg, and the handling of empty arguments).
+    BeforeAll {
+        $script:Folder = New-FileDir -Files @()
+        $script:Other = New-FileDir -Files @()
+        function Invoke-AsWsl([hashtable]$Wsl) {
+            Copy-Item (Join-Path $Wsl.FAKE_WSL_DIR 'args.bin') (Join-Path $script:Folder 'handed.bin') -Force
+            $run = 'mapfile -d "" w < handed.bin; for ((i = 0; i < ${#w[@]}; i++)); do [[ ${w[i]} == -c ]] && break; done; ' +
+                   'exec bash --noprofile --norc -c "${w[i+1]}" "${w[@]:i+2}"'
+            # HOME elsewhere: the folder guard at the start of the script must see that bash is in the folder
+            $r = Invoke-GitBash -Script $run -WorkingDirectory $script:Folder -Env @{ HOME = $script:Other }
+            if ($r.ExitCode -ne 0) { throw "bash failed ($($r.ExitCode)): $($r.Err)" }
+            $words = $r.Out -split "`0"
+            , @($words[0..($words.Count - 2)])
+        }
+        function Assert-SameWords([string[]]$Got, [string[]]$Want) {
+            $Got.Count | Should -Be $Want.Count
+            for ($i = 0; $i -lt $Want.Count; $i++) {
+                [string]::Equals($Got[$i], $Want[$i], [StringComparison]::Ordinal) | Should -BeTrue -Because "argument $i is [$($Want[$i])], not [$($Got[$i])]"
+            }
+        }
+        $script:Words = @(Get-NastyArguments) + @(New-HostileArguments -Random ([System.Random]::new(4242)) -Count 200 -Mode raw)
+    }
+
+    It 'hands the bash command of a raw wrapper over as it is' {
+        $wsl = New-FakeWsl
+        $r = Invoke-Fake -Wsl $wsl -Name 'printf' -Arguments (@('--wslbin-raw', '%s\0') + $script:Words) -WorkingDirectory $script:Folder
+        $r.ExitCode | Should -Be 0 -Because $r.Err
+        Assert-SameWords (Invoke-AsWsl $wsl) $script:Words
+    }
+
+    It 'hands the positional parameters of "wslbin -c" over as typed, empty ones too' {
+        $wsl = New-FakeWsl
+        $r = Invoke-Fake -Wsl $wsl -Arguments (@('-c', 'printf "%s\0" "$0" "$@"', '') + $script:Words) -WorkingDirectory $script:Folder
+        $r.ExitCode | Should -Be 0 -Because $r.Err
+        Assert-SameWords (Invoke-AsWsl $wsl) (@('') + $script:Words)
+    }
+}
+
+Describe "Tab completion of wslbin's own commands" {
+    It 'offers nothing after <_>, which takes nothing, and does not ask WSL' -ForEach @('--doctor', '--version', '--ai-context') {
+        $wsl = New-FakeWsl -Files @{ 'run.out' = "junk`n" }
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--complete', '2', 'wslbin', $_, '')
+        $r.Out | Should -BeNullOrEmpty
+        Get-Calls $wsl | Should -BeNullOrEmpty
+    }
+
+    It 'offers the options of --install-ai-context, and does not ask WSL' {
+        $wsl = New-FakeWsl -Files @{ 'run.out' = "junk`n" }
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--complete', '2', 'wslbin', '--install-ai-context', '--c')
+        @($r.Out -split "`n" | Where-Object { $_ }) | Should -Be @('--claude', '--codex', '--claude-dir', '--codex-dir')
+        Get-Calls $wsl | Should -BeNullOrEmpty
+    }
+
+    It 'hands bash a Windows path as typed after "wslbin --raw <utility>", as the run would' {
+        $wsl = New-FakeWsl
+        $null = Invoke-Fake -Wsl $wsl -Arguments @('--complete', '3', 'wslbin', '--raw', 'rsync', 'C:\Win')
+        $words = [IO.File]::ReadAllText((Join-Path $wsl.FAKE_WSL_DIR 'args.bin'), [Text.UTF8Encoding]::new($false)) -split "`0"
+        $words | Should -Contain 'C:\Win'
+        $words | Should -Not -Contain '/mnt/c/Win'
+    }
+}
+
 Describe 'a folder that has no Linux path' {
     BeforeAll {
         # The test folder through the administrative share of its drive: a network path to Windows.

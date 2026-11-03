@@ -1,7 +1,8 @@
 // wslbin: run Linux utilities from WSL as ordinary Windows programs.
 //
 // C# on .NET 10, published as one self-contained Native AOT program with nothing that ships with it
-// (wslbin.csproj, built by build.ps1). DECISIONS.md is the source of truth for behaviour.
+// (wslbin.csproj, built by build.ps1). DECISIONS.md records the decisions and their reasons; the code and
+// the documents must agree with it and with each other.
 //
 // The files of src/, and what is in them:
 //   wslbin.cs           Program: the entry point, the command line of wrapper copies and wslbin's own
@@ -56,7 +57,8 @@ internal static class ExitCodes
     // The convention of env, timeout, nice and docker: 125 means the wrapper itself failed.
     // 126 and 127 (cannot run, not found) come from bash unchanged.
     public const int Failed = 125;
-    // What a shell reports for a command stopped by Ctrl+C: 128 + SIGINT.
+    // wsl.exe itself ended by Ctrl+C (STATUS_CONTROL_C_EXIT): 128 + SIGINT, what a shell reports. A utility
+    // that SIGINT ends gives 2, the number of the signal, which wsl.exe passes on.
     public const int Interrupted = 130;
 }
 
@@ -178,7 +180,7 @@ internal static class Program
         }
         else
         {
-            inv = ParseWrapper(exeName, args);
+            inv = ParseWrapper(UtilityName(exePath), args);
         }
 
         Config cfg = context.Config;
@@ -196,6 +198,25 @@ internal static class Program
         // Arguments after "-c <string>" become $0, $1, ... of the bash string, as in "bash -c".
         IList<string> positional = inv.Script != null ? inv.Args : [];
         return Launcher.Run(cfg, script, positional, env);
+    }
+
+    // The name of the utility: the file name of the wrapper as the folder spells it. Environment.ProcessPath
+    // has the case that the caller used (Process.Start("RSYNC"), a path typed as ...\RSYNC.EXE), which
+    // Windows does not mind and Linux does: bash would look for "RSYNC". FindFirstFile, under
+    // EnumerateFiles, gives the name as it is stored. (Not checked: a program started by a short 8.3 name.)
+    static string UtilityName(string exePath)
+    {
+        string? stored = null;
+        try
+        {
+            string? dir = Path.GetDirectoryName(exePath);
+            if (dir != null) stored = new DirectoryInfo(dir).EnumerateFiles(Path.GetFileName(exePath)).FirstOrDefault()?.Name;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // the name as it was started will do
+        }
+        return Path.GetFileNameWithoutExtension(stored ?? exePath);
     }
 
     // <utility>.exe [--wslbin-*]... [arguments]

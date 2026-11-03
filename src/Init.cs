@@ -36,7 +36,13 @@ internal static class Init
             .Replace("@EXE@", PowerShellString(exePath))
             .Replace("@NAMES@", string.Join(", ", names))
             .Replace("@FALLBACK@", fallback ? "$true" : "$false");
-        Out.Info(code.TrimEnd('\n'));
+        // "wslbin --init pwsh | Invoke-Expression" hands every line of the output to Invoke-Expression as a
+        // command of its own, and the code is many lines: so it goes out as one line that decodes it and runs
+        // it in the scope of the caller (ASCII only, whatever the code page). No comment line: in
+        // "Invoke-Expression (wslbin --init pwsh)" the lines are joined with blanks, and a comment would swallow
+        // the rest.
+        string encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(code));
+        Out.Info($"Invoke-Expression ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')))");
         return 0;
     }
 

@@ -94,6 +94,15 @@ function Invoke-Wslbin {
     }
 }
 
+# Makes wrappers in $Dir through --internal-link, the half of --link that needs no WSL, with a PATH that
+# holds nothing of this machine's programs: --internal-link refuses a name that a program in PATH has (the
+# ls.exe of Git, say). Throws when any of them could not be made, so that a test never goes on without them.
+function New-TestWrappers {
+    param([string]$Dir, [string[]]$Names, [string]$From = $global:WslbinTest.Exe)
+    $r = Invoke-Wslbin -From $From -Name 'wslbin' -Dir $Dir -Env @{ PATH = (Get-IsolatedPath $Dir) } -Arguments (@('--internal-link') + $Names)
+    if ($r.ExitCode -ne 0) { throw "could not make the wrappers $($Names -join ', ') in $Dir (exit code $($r.ExitCode)): $($r.Err)" }
+}
+
 # A test build of wslbin whose wsl.exe is a stand-in (tests\FakeWslEntry.cs), and the stand-in
 # (tests\FakeWsl.cs): $global:WslbinTest.FakeExe and .FakeWsl. Neither needs WSL.
 function Initialize-FakeWsl {

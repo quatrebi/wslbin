@@ -106,19 +106,32 @@ internal static class Completion
                 ];
             case "--link":
                 return WithCommands(StartingWith(LinkOptions, cur), cfg, cur);
+            case "--install-ai-context":
+                // after --claude-dir or --codex-dir comes a folder, which is not wslbin's to offer
+                return AiContext.InstallFolderOptions.Contains(words[cword - 1])
+                    ? []
+                    : StartingWith([.. AiContext.InstallFlags, .. AiContext.InstallFolderOptions], cur);
             case Program.ScriptOption:
                 return [];
         }
+        // the other commands of wslbin itself (--doctor, --version, ...) take nothing that could be offered;
+        // without this they would be taken for a utility named "--doctor"
+        if (words[1].StartsWith('-') && !Program.ModeOptions.Contains(words[1])) return [];
 
         // wslbin [--raw | --sh | --explain] <utility> <arguments...>
         int u = 1;
-        while (u < words.Count && Program.ModeOptions.Contains(words[u])) u++;
+        ArgMode? mode = null;
+        for (; u < words.Count && Program.ModeOptions.Contains(words[u]); u++)
+        {
+            if (words[u] == Program.RawOption) mode = ArgMode.Raw;
+            else if (words[u] == Program.ShOption) mode = ArgMode.Sh;
+        }
         if (u >= words.Count || cword < u) return StartingWith(Program.ModeOptions, cur);
-        if (cword == u) return cur.Length > 0 ? CommandsInWsl(cfg, cur) : [];
+        if (cword == u) return cur.StartsWith('-') ? StartingWith(Program.RunOptions, cur) : cur.Length > 0 ? CommandsInWsl(cfg, cur) : [];
 
         List<string> utilityWords = words.GetRange(u, words.Count - u);
         if (utilityWords[0] == Program.ScriptOption) return [];
-        return ForUtility(CommandName(utilityWords[0]), utilityWords, cword - u, cfg);
+        return ForUtility(CommandName(utilityWords[0]), utilityWords, cword - u, cfg, mode);
     }
 
     // The options, and the commands of WSL when a word (not an option) has been begun.
@@ -139,13 +152,14 @@ internal static class Completion
 
     // ---- a wrapper -----------------------------------------------------------------------
 
-    static List<string> ForUtility(string utility, List<string> words, int cword, Config cfg)
+    // cliMode: --raw or --sh of "wslbin --raw <utility>", which wins over the config as it does in a run
+    static List<string> ForUtility(string utility, List<string> words, int cword, Config cfg, ArgMode? cliMode = null)
     {
         string cur = words[cword];
 
         // --wslbin-* flags in front of the arguments belong to wslbin, not to the utility.
         int flags = 0;
-        ArgMode mode = cfg.ModeFor(utility);
+        ArgMode mode = cliMode ?? cfg.ModeFor(utility);
         while (1 + flags < cword && words[1 + flags].StartsWith("--wslbin-", StringComparison.Ordinal))
         {
             if (words[1 + flags] == Program.RawFlag) mode = ArgMode.Raw;

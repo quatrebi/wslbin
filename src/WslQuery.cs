@@ -151,7 +151,7 @@ internal static class WslQuery
         List<Distro> list = [];
         foreach (string raw in Text.Lines(r.Output))
         {
-            string line = raw.TrimStart('﻿').TrimEnd();
+            string line = raw.TrimStart('\uFEFF').TrimEnd();
             bool isDefault = line.StartsWith('*');
             if (isDefault) line = line[1..];
             string trimmed = line.TrimStart(' ', '\t');

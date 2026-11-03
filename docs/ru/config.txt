@@ -11,7 +11,9 @@ path) добавляет к нему; у остальных ключей бер�
       перечисляет установленные.
 
   lang = ru
-      Язык справки и wslbin --ai-context: en, ru или auto (язык Windows). По умолчанию - auto.
+      Язык справки, wslbin --ai-context и навыка, который пишет wslbin --install-ai-context: en, ru
+      или auto (язык Windows). По умолчанию - auto. (Блок в CLAUDE.md и AGENTS.md всегда на
+      английском.)
 
   raw = grep, sed
       Утилиты, которые всегда получают аргументы нетронутыми (как --wslbin-raw). Через запятую или

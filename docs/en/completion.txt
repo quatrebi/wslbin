@@ -9,6 +9,7 @@ non-ASCII names included. Needs the bash-completion package in WSL (wslbin --doc
 PowerShell (Windows PowerShell 5.1 and PowerShell 7)
   Add one line to the profile ($PROFILE):
       wslbin --init pwsh | Invoke-Expression
+  (wslbin --init pwsh prints its code as one encoded line, so that Invoke-Expression runs it whole.)
   It registers a completer for every wrapper and for wslbin itself. It also removes the PowerShell
   aliases and functions that would hide a wrapper (ls, cat, man, curl, ...): a wrapper is
   something you asked for, and PowerShell would otherwise run its own command first. They are gone
@@ -32,7 +33,7 @@ What is completed
   - the options and arguments of a wrapper;
   - --wslbin-raw, --wslbin-sh, --wslbin-explain right after the utility (--w<Tab>);
   - wslbin's own options, and after them: wrappers (--unlink), help topics (--help), shells (--init),
-    names of Linux commands (wslbin <Tab>, --link <Tab>).
+    the options of --install-ai-context, names of Linux commands (wslbin <Tab>, --link <Tab>).
 
 Speed: one request is one call of wsl.exe, about a quarter of a second (man: about half a second).
 A WSL that has not answered within 10 seconds is given up on, and Tab offers nothing. In a folder

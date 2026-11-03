@@ -16,7 +16,8 @@ How arguments are handled (the options go first)
   --wslbin-explain   print the bash command instead of running it
 
 Wrappers
-  wslbin --link [-y] [--dry-run] [<utility>...]   create or refresh wrappers (no names: refresh all)
+  wslbin --link [-y] [--dry-run] [<utility>...]   create or refresh wrappers (no names: refresh all);
+                                                  -y (--yes) installs a utility that WSL lacks with apt
   wslbin --unlink (<utility>... | --all)          remove wrappers
   wslbin --list [--names]                         wrappers and what is wrong with them
   wslbin --doctor                                 check WSL, bash, completion, PATH, wrappers, config
@@ -28,6 +29,7 @@ Shells
 For AI agents
   wslbin --ai-context                             how an agent should call Linux utilities
   wslbin --install-ai-context                     put that where Claude Code and Codex read it
+      [--remove] [--dry-run] [--claude | --codex] [--claude-dir <folder>] [--codex-dir <folder>]
 
 More
   wslbin --help <topic>     topics: modes, paths, globs, env, completion, config, troubleshooting

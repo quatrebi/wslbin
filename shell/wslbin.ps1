@@ -1,6 +1,7 @@
 # wslbin for PowerShell: Tab completion for the wrappers, and the PowerShell names that would
-# otherwise hide them. "wslbin --init pwsh" fills in the @...@ values and prints this; load it from
-# the profile with
+# otherwise hide them. "wslbin --init pwsh" fills in the @...@ values and prints this as one line,
+# base64-encoded, because "| Invoke-Expression" takes each line of a program's output as a command of
+# its own; load it from the profile with
 #     wslbin --init pwsh | Invoke-Expression
 # Works in Windows PowerShell 5.1 and in PowerShell 7.
 # PowerShell looks at aliases and functions before it looks for programs, so "man" would run

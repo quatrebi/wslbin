@@ -14,7 +14,8 @@ internal static class AiContext
     const string EndMarker = "<!-- wslbin:end -->";
     const string SkillMarker = "<!-- wslbin:managed";
 
-    // In English whatever the language of the machine: the agents read it, not the user.
+    // The block is in English whatever the language of the machine: the agents read it, not the user.
+    // The skill is the text of --ai-context, which follows lang in wslbin.ini (a test checks both).
     const string BlockBody =
         "## Linux utilities on this Windows machine\n" +
         "\n" +
@@ -39,16 +40,24 @@ internal static class AiContext
     /// <param name="Explicit">named on the command line, so it is created when missing</param>
     sealed record Target(string Name, string Option, string? Folder, bool Explicit, bool IsCodex);
 
+    // The options of --install-ai-context (Tab completion offers them too).
+    internal static readonly string[] InstallFlags = ["--remove", "--dry-run", "--claude", "--codex"];
+    internal static readonly string[] InstallFolderOptions = ["--claude-dir", "--codex-dir"];
+
     public static int Install(IList<string> args, Config cfg)
     {
-        var options = Options.Parse(args, "--install-ai-context", ["--remove", "--dry-run", "--claude", "--codex"],
-                                    folders: ["--claude-dir", "--codex-dir"]);
+        var options = Options.Parse(args, "--install-ai-context", InstallFlags, folders: InstallFolderOptions);
         bool remove = options.Has("--remove");
         bool dryRun = options.Has("--dry-run");
         bool onlyClaude = options.Has("--claude");
         bool onlyCodex = options.Has("--codex");
         string? claudeDir = options.Value("--claude-dir");
         string? codexDir = options.Value("--codex-dir");
+        // a folder named for the agent that the other option leaves out would be ignored without a word
+        if (claudeDir != null && onlyCodex && !onlyClaude)
+            throw new WslbinException("--claude-dir names the folder of Claude Code, which --codex leaves out");
+        if (codexDir != null && onlyClaude && !onlyCodex)
+            throw new WslbinException("--codex-dir names the folder of Codex, which --claude leaves out");
 
         // Where each agent keeps its instructions: the folder that its own variable names, or its
         // usual place in the home folder. (Claude Code: CLAUDE_CONFIG_DIR, else ~/.claude; Codex:
@@ -144,9 +153,11 @@ internal static class AiContext
         return true;
     }
 
+    // What was done, or in a dry run what would be done.
+    static void Report(bool dryRun, string done, string wouldDo) => Out.Info(dryRun ? wouldDo : done);
+
     static void ApplyBlock(string path, bool remove, bool dryRun)
     {
-        string prefix = dryRun ? "would " : "";
         bool exists = File.Exists(path);
         bool bom = false;
         string existing = exists ? ReadUtf8(path, out bom) : "";
@@ -174,12 +185,12 @@ internal static class AiContext
             if (result.Trim().Length == 0)
             {
                 if (!dryRun) File.Delete(path);
-                Out.Info($"{prefix}removed {path} (it held nothing else)");
+                Report(dryRun, $"removed {path} (it held nothing else)", $"would remove {path} (it holds nothing else)");
             }
             else
             {
                 if (!dryRun) Text.WriteAllAtomic(path, result, bom);
-                Out.Info($"{prefix}removed the wslbin block from {path}");
+                Report(dryRun, $"removed the wslbin block from {path}", $"would remove the wslbin block from {path}");
             }
             return;
         }
@@ -197,18 +208,18 @@ internal static class AiContext
                 return;
             }
             if (!dryRun) Text.WriteAllAtomic(path, updated, bom);
-            Out.Info($"{prefix}updated the wslbin block in {path}");
+            Report(dryRun, $"updated the wslbin block in {path}", $"would update the wslbin block in {path}");
             return;
         }
 
         string separator = existing.Length == 0 ? "" : existing.EndsWith('\n') ? newline : newline + newline;
         if (!dryRun) Text.WriteAllAtomic(path, existing + separator + block, bom);
-        Out.Info(prefix + (exists ? $"added the wslbin block to {path}" : $"created {path}"));
+        if (exists) Report(dryRun, $"added the wslbin block to {path}", $"would add the wslbin block to {path}");
+        else Report(dryRun, $"created {path}", $"would create {path}");
     }
 
     static void ApplySkill(string path, bool remove, bool dryRun, Config cfg)
     {
-        string prefix = dryRun ? "would " : "";
         bool exists = File.Exists(path);
         string existing = exists ? File.ReadAllText(path, new UTF8Encoding(false)) : "";
         if (exists && !existing.Contains(SkillMarker, StringComparison.Ordinal))
@@ -230,7 +241,7 @@ internal static class AiContext
                 string folder = Path.GetDirectoryName(path)!;
                 if (Directory.GetFileSystemEntries(folder).Length == 0) Directory.Delete(folder);
             }
-            Out.Info($"{prefix}removed {path}");
+            Report(dryRun, $"removed {path}", $"would remove {path}");
             return;
         }
 
@@ -248,6 +259,7 @@ internal static class AiContext
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             Text.WriteAllAtomic(path, skill);
         }
-        Out.Info($"{prefix}{(exists ? "updated" : "created")} {path}");
+        if (exists) Report(dryRun, $"updated {path}", $"would update {path}");
+        else Report(dryRun, $"created {path}", $"would create {path}");
     }
 }

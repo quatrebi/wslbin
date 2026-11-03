@@ -325,6 +325,12 @@ Describe 'the utility name' {
         Get-Explain -Name 'rsync' -Arguments @('-a') | Should -BeExactly 'rsync -a'
     }
 
+    It 'is spelt as the folder spells the file, in whatever case the wrapper was started (Linux minds the case)' {
+        $dir = (Invoke-Wslbin -Name 'rsync' -Arguments @('--wslbin-explain')).Dir
+        # the path as a program may give it to CreateProcess: ...\RSYNC.exe for rsync.exe
+        (Invoke-Wslbin -Name 'RSYNC' -Dir $dir -Arguments @('--wslbin-explain', '-av', 'x')).Out | Should -BeExactly "rsync -av x`n"
+    }
+
     It 'may contain dots and plus signs' {
         Get-Explain -Name 'g++' | Should -BeExactly 'g++'
         Get-Explain -Name 'python3.12' | Should -BeExactly 'python3.12'

@@ -15,8 +15,10 @@ Exit codes
   0..255  the utility's own code (one that a signal ended gives the number of the signal:
           2 after Ctrl+C, 15 for kill).
   125     wslbin itself failed (a wrong option, no WSL, a bad distro in wslbin.ini, a folder that
-          has no Linux path), or wsl.exe did (no such distribution: its message is printed above).
+          has no Linux path), or wsl.exe did (no such distribution: its message is printed above);
+          for wslbin --doctor: a check failed ([FAIL]).
   126     bash found the program but cannot run it.   127   bash did not find it.
+  130     wsl.exe itself was ended by Ctrl+C (rare: a utility that Ctrl+C stops gives 2).
 
 Common causes
   command not found (127)

@@ -21,8 +21,8 @@ These are left as they are:
   \\server\share\x             a network path has no Linux counterpart: warning on standard error.
   C:x                           a path relative to a drive: warning. (Not shown for text like
                                 sed s:a:b:, which has a second colon.)
-  \\wsl.localhost\<other>\x     a path in another distribution than the one wslbin runs in, when
-                                distro is set in wslbin.ini: warning.
+  \\wsl.localhost\<other>\x     a path in another distribution than the one wslbin runs in (distro
+                                in wslbin.ini, or else the default one): warning.
   host:/srv/*, https://x/y      anything that does not start with a drive letter and a slash.
 
 What to know

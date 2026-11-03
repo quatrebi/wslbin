@@ -10,7 +10,8 @@
 // stand-in leaves a process behind that holds its standard output open that long after it has ended,
 // as a Windows program started from Linux would; its process id goes to hold.pid. Every call appends a
 // line to calls.txt in the folder, writes its arguments, each followed by a NUL, to args.bin (UTF-8;
-// the last call only), and its process id to pid.txt.
+// the last call only), the variables WSLENV, SystemRoot and TEMP as NAME=value, each followed by a NUL,
+// to env.bin (the last call only), and its process id to pid.txt.
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -23,6 +24,10 @@ static class FakeWsl
         string dir = Environment.GetEnvironmentVariable("FAKE_WSL_DIR");
         File.AppendAllText(Path.Combine(dir, "calls.txt"), string.Join(" ", args) + "\n");
         File.WriteAllText(Path.Combine(dir, "args.bin"), string.Join("\0", args) + "\0", new System.Text.UTF8Encoding(false));
+        string env = "";
+        foreach (string name in new[] { "WSLENV", "SystemRoot", "TEMP" })
+            env += name + "=" + Environment.GetEnvironmentVariable(name) + "\0";
+        File.WriteAllText(Path.Combine(dir, "env.bin"), env, new System.Text.UTF8Encoding(false));
         File.WriteAllText(Path.Combine(dir, "pid.txt"), Process.GetCurrentProcess().Id.ToString());
         string prefix = args.Length > 0 && args[0] == "-l" ? "list" : "run";
         string sleep = Path.Combine(dir, prefix + ".sleep");

@@ -34,14 +34,26 @@ BeforeAll {
         $h
     }
 
-    # wslbin --complete <cword> <words...>, as a list of candidates.
+    # wslbin --complete <cword> <words...>, as a list of candidates. --complete swallows every error so
+    # that Tab stays quiet; WSLBIN_DEBUG=1 makes it print them, and any of them fails the test, or else an
+    # "offers nothing" test would pass when the code crashed.
     function Get-Candidates {
         param([string]$Dir, [int]$Cword, [string[]]$Words, [string]$WorkingDirectory, [string]$Ini)
-        $splat = @{ Name = 'wslbin'; Dir = $Dir; Arguments = (@('--complete', "$Cword") + $Words) }
+        $splat = @{ Name = 'wslbin'; Dir = $Dir; Arguments = (@('--complete', "$Cword") + $Words); Env = @{ WSLBIN_DEBUG = '1' } }
         if ($WorkingDirectory) { $splat.WorkingDirectory = $WorkingDirectory }
         if ($PSBoundParameters.ContainsKey('Ini')) { $splat.Ini = $Ini }
         $r = Invoke-Wslbin @splat
+        if ($r.Err) { throw "wslbin --complete failed: $($r.Err)" }
         @($r.Out -split "`n" | Where-Object { $_ })
+    }
+
+    # The code that "wslbin --init pwsh" hands over. It prints one line that decodes the code and runs it
+    # (Init.PowerShell): "| Invoke-Expression" would take each line of several as a command of its own.
+    function Get-InitCode([string]$Out) {
+        $lines = @($Out -split "`n" | Where-Object { $_ })
+        if ($lines.Count -ne 1) { throw "wslbin --init pwsh printed $($lines.Count) lines, not one" }
+        if ($lines[0] -notmatch "FromBase64String\('([A-Za-z0-9+/=]+)'\)") { throw "no encoded code in: $($lines[0])" }
+        [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Matches[1]))
     }
 
     # Asks a PowerShell, after "wslbin --init pwsh | Invoke-Expression", what Tab would offer for each line.
@@ -53,8 +65,7 @@ BeforeAll {
         [IO.File]::WriteAllText($linesFile, (ConvertTo-Json -InputObject @($Lines)), [Text.UTF8Encoding]::new($true))
         $script = @'
 param($WslbinExe, $LinesFile, $ResultFile, $Aliases)
-$code = & $WslbinExe --init pwsh
-Invoke-Expression ($code -join "`n")
+& $WslbinExe --init pwsh | Invoke-Expression
 $lines = @(Get-Content -Raw -Encoding UTF8 $LinesFile | ConvertFrom-Json | ForEach-Object { $_ })
 $out = @()
 foreach ($line in $lines) {
@@ -181,43 +192,60 @@ Describe 'wslbin --complete: wslbin itself (no WSL)' {
 Describe 'wslbin --init pwsh: the generated code' {
     BeforeAll { $script:H = New-WrapperHome }
 
+    It 'prints one line of ASCII, which "| Invoke-Expression" runs as one command' {
+        $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--init', 'pwsh')
+        $r.ExitCode | Should -Be 0
+        @($r.Out -split "`n" | Where-Object { $_ }).Count | Should -Be 1
+        $r.Out | Should -Match '^Invoke-Expression \(.*FromBase64String'
+        [regex]::IsMatch($r.Out, '^[\x20-\x7E]+\n$') | Should -BeTrue
+    }
+
+    It 'works as the documented line "wslbin --init pwsh | Invoke-Expression" in <Shell>' -ForEach $Shells {
+        $answer = Invoke-PowerShellCompletion -Exe $Exe -Dir $script:H -Lines @('rsync --wslbin-e') -AliasNames @('ls')
+        @($answer.Results)[0].Items | Should -Be @('--wslbin-explain')
+        @($answer.AliasesLeft) | Should -BeNullOrEmpty
+    }
+
     It 'is valid PowerShell, with every value filled in' {
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--init', 'pwsh')
         $r.ExitCode | Should -Be 0
-        $r.Out | Should -Not -Match '@(EXE|NAMES|FALLBACK)@'
-        $errors = $null
-        [void][System.Management.Automation.Language.Parser]::ParseInput($r.Out, [ref]$null, [ref]$errors)
-        $errors | Should -BeNullOrEmpty
+        $code = Get-InitCode $r.Out
+        $code | Should -Not -Match '@(EXE|NAMES|FALLBACK)@'
+        foreach ($text in $r.Out, $code) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$errors)
+            $errors | Should -BeNullOrEmpty
+        }
     }
 
     It 'names the wrappers and the program' {
-        $out = (Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--init', 'pwsh')).Out
-        $out | Should -Match "@\('ls', 'make', 'man', 'rsync'\)"
-        $out | Should -Match ([regex]::Escape((Join-Path $script:H 'wslbin.exe')))
+        $code = Get-InitCode (Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--init', 'pwsh')).Out
+        $code | Should -Match "@\('ls', 'make', 'man', 'rsync'\)"
+        $code | Should -Match ([regex]::Escape((Join-Path $script:H 'wslbin.exe')))
     }
 
     It 'leaves out a wrapper file whose name could not be a wrapper name: a quote in it would break the code' {
         $h = New-WslbinHome
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $h -Arguments @('--internal-link', 'good')
+        New-TestWrappers $h @('good')
         Copy-Item (Join-Path $h 'good.exe') (Join-Path $h "it's.exe")
         Copy-Item (Join-Path $h 'good.exe') (Join-Path $h "a';calc;'.exe")
-        $out = (Invoke-Wslbin -Name 'wslbin' -Dir $h -Arguments @('--init', 'pwsh')).Out
-        $out | Should -Match "@\('good'\)"
-        $out | Should -Not -Match 'calc'
+        $code = Get-InitCode (Invoke-Wslbin -Name 'wslbin' -Dir $h -Arguments @('--init', 'pwsh')).Out
+        $code | Should -Match "@\('good'\)"
+        $code | Should -Not -Match 'calc'
         $errors = $null
-        [void][System.Management.Automation.Language.Parser]::ParseInput($out, [ref]$null, [ref]$errors)
+        [void][System.Management.Automation.Language.Parser]::ParseInput($code, [ref]$null, [ref]$errors)
         $errors | Should -BeNullOrEmpty
     }
 
     It 'registers the native fallback only when asked' {
-        $plain = (Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--init', 'pwsh')).Out
+        $plain = Get-InitCode (Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--init', 'pwsh')).Out
         $plain | Should -Match '\$useFallback = \$false'
-        $with = (Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--init', 'pwsh', '--native-fallback')).Out
+        $with = Get-InitCode (Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--init', 'pwsh', '--native-fallback')).Out
         $with | Should -Match '\$useFallback = \$true'
     }
 
     It 'is valid in Windows PowerShell 5.1 too' -Skip:(-not (Test-Path "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe")) {
-        $code = (Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--init', 'pwsh')).Out
+        $code = Get-InitCode (Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--init', 'pwsh')).Out
         $file = Join-Path $global:WslbinTest.Work 'init-check.ps1'
         [IO.File]::WriteAllText($file, $code, [Text.UTF8Encoding]::new($true))
         $answer = & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "`$e = `$null; [void][System.Management.Automation.Language.Parser]::ParseFile('$file', [ref]`$null, [ref]`$e); `$e.Count"
@@ -228,7 +256,7 @@ Describe 'wslbin --init pwsh: the generated code' {
         $dir = Join-Path $global:WslbinTest.Work "dir-$script:Ru"
         New-Item -ItemType Directory -Path $dir | Out-Null
         Copy-Item $global:WslbinTest.Exe (Join-Path $dir 'wslbin.exe')
-        $out = (Invoke-Wslbin -Name 'wslbin' -Dir $dir -Arguments @('--init', 'pwsh')).Out
+        $out = Get-InitCode (Invoke-Wslbin -Name 'wslbin' -Dir $dir -Arguments @('--init', 'pwsh')).Out
         $out | Should -Match '\[char\]\d+'
         $line = ($out -split "`n" | Where-Object { $_ -match '^\s*\$exe = ' } | Select-Object -First 1)
         $expression = $line -replace '^\s*\$exe = ', ''
@@ -245,7 +273,7 @@ Describe 'wslbin --init pwsh: the generated code' {
         $dir = Join-Path $global:WslbinTest.Work "it's home"
         New-Item -ItemType Directory -Path $dir | Out-Null
         Copy-Item $global:WslbinTest.Exe (Join-Path $dir 'wslbin.exe')
-        $out = (Invoke-Wslbin -Name 'wslbin' -Dir $dir -Arguments @('--init', 'pwsh')).Out
+        $out = Get-InitCode (Invoke-Wslbin -Name 'wslbin' -Dir $dir -Arguments @('--init', 'pwsh')).Out
         $errors = $null
         [void][System.Management.Automation.Language.Parser]::ParseInput($out, [ref]$null, [ref]$errors)
         $errors | Should -BeNullOrEmpty

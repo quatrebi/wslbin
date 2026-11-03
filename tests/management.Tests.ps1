@@ -75,7 +75,7 @@ Describe 'names that Windows already uses' {
 
     It 'does not count its own folder as a conflict' {
         $h = New-WslbinHome
-        (Invoke-Wslbin -Name 'wslbin' -Dir $h -Arguments @('--internal-link', 'mine')).ExitCode | Should -Be 0
+        New-TestWrappers $h @('mine')
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $h -Env @{ PATH = (Get-IsolatedPath $h) } -Arguments @('--link')
         $r.ExitCode | Should -Be 0
         $r.Out | Should -Match 'up to date mine.exe'
@@ -92,7 +92,7 @@ Describe 'names that Windows already uses' {
     # PATH, say). The wrapper must still be refreshed: an old copy of wslbin.exe keeps the old faults.
     It 'refreshes a wrapper that is there already although a Windows program of the same name has turned up since, with a warning' {
         $h = New-WslbinHome
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $h -Arguments @('--internal-link', 'sometool')
+        New-TestWrappers $h @('sometool')
         $stream = [IO.File]::Open((Join-Path $h 'sometool.exe'), 'Append'); $stream.WriteByte(0); $stream.Close()
         $other = Join-Path $global:WslbinTest.Work ('later-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $other | Out-Null
@@ -118,7 +118,7 @@ Describe 'creating, refreshing and removing wrappers' {
     }
 
     It 'creates exact copies of wslbin.exe' {
-        $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'alpha', 'beta')
+        $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--internal-link', 'alpha', 'beta')
         $r.ExitCode | Should -Be 0
         foreach ($n in 'alpha', 'beta') {
             (Get-FileHash (Join-Path $script:H "$n.exe")).Hash | Should -Be (Get-FileHash (Join-Path $script:H 'wslbin.exe')).Hash
@@ -126,14 +126,14 @@ Describe 'creating, refreshing and removing wrappers' {
     }
 
     It 'lists wrappers by name, sorted, and not wslbin.exe itself' {
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'beta', 'alpha', 'Gamma')
+        New-TestWrappers $script:H @('beta', 'alpha', 'Gamma')
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--list', '--names')
         ($r.Out -split "`n" | Where-Object { $_ }) | Should -Be @('alpha', 'beta', 'Gamma')
     }
 
     It 'does not take other programs in the folder for wrappers' {
         Copy-Item "$env:SystemRoot\System32\whoami.exe" (Join-Path $script:H 'foreign.exe')
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'alpha')
+        New-TestWrappers $script:H @('alpha')
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--list', '--names')
         ($r.Out -split "`n" | Where-Object { $_ }) | Should -Be @('alpha')
     }
@@ -146,12 +146,12 @@ Describe 'creating, refreshing and removing wrappers' {
         $r.ExitCode | Should -Be 125
         $r.Err | Should -Match 'is not a wslbin wrapper|exists and is not a wslbin wrapper'
         (Get-FileHash $foreign).Hash | Should -Be $hash
-        (Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'foreign')).ExitCode | Should -Be 125
+        (Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--internal-link', 'foreign')).ExitCode | Should -Be 125
         (Get-FileHash $foreign).Hash | Should -Be $hash
     }
 
     It 'refreshes only the wrappers that are out of date' {
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'alpha', 'beta')
+        New-TestWrappers $script:H @('alpha', 'beta')
         # trailing bytes keep the program runnable and recognisable, but make it differ from wslbin.exe
         $stream = [IO.File]::Open((Join-Path $script:H 'alpha.exe'), 'Append')
         $stream.WriteByte(0); $stream.Close()
@@ -163,7 +163,7 @@ Describe 'creating, refreshing and removing wrappers' {
     }
 
     It 'refreshes and removes wrapper files whose names could not be wrapper names, and goes on with the rest' {
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'aa', 'zz')
+        New-TestWrappers $script:H @('aa', 'zz')
         Copy-Item (Join-Path $script:H 'aa.exe') (Join-Path $script:H 'my tool.exe')
         $stream = [IO.File]::Open((Join-Path $script:H 'aa.exe'), 'Append'); $stream.WriteByte(0); $stream.Close()
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--link')
@@ -178,7 +178,7 @@ Describe 'creating, refreshing and removing wrappers' {
     }
 
     It 'does not ask for administrator rights when one file cannot be changed for another reason (read-only)' {
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'locked')
+        New-TestWrappers $script:H @('locked')
         $file = Join-Path $script:H 'locked.exe'
         $stream = [IO.File]::Open($file, 'Append'); $stream.WriteByte(0); $stream.Close()      # out of date: --link wants to replace it
         (Get-Item $file).IsReadOnly = $true
@@ -200,7 +200,7 @@ Describe 'creating, refreshing and removing wrappers' {
 
     It 'asks for administrator rights when the folder cannot be written, and reports a refusal (WSLBIN_NO_ELEVATION is set: no question is shown)' {
         $h = New-WslbinHome
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $h -Arguments @('--internal-link', 'aa')
+        New-TestWrappers $h @('aa')
         $stream = [IO.File]::Open((Join-Path $h 'aa.exe'), 'Append'); $stream.WriteByte(0); $stream.Close()
         $user = "$env:USERDOMAIN\$env:USERNAME"
         & icacls.exe $h /deny "${user}:(OI)(CI)(WD,AD)" /T | Out-Null
@@ -215,6 +215,24 @@ Describe 'creating, refreshing and removing wrappers' {
         }
     }
 
+    It 'tells to rename or delete a wrapper file whose name it cannot hand to the copy with administrator rights' {
+        $h = New-WslbinHome
+        New-TestWrappers $h @('aa')
+        Copy-Item (Join-Path $h 'aa.exe') (Join-Path $h 'my tool.exe')
+        foreach ($n in 'aa', 'my tool') { $stream = [IO.File]::Open((Join-Path $h "$n.exe"), 'Append'); $stream.WriteByte(0); $stream.Close() }
+        $user = "$env:USERDOMAIN\$env:USERNAME"
+        & icacls.exe $h /deny "${user}:(OI)(CI)(WD,AD)" /T | Out-Null
+        try {
+            $r = Invoke-Wslbin -Name 'wslbin' -Dir $h -Env @{ PATH = (Get-IsolatedPath $h) } -Arguments @('--link')
+            $r.ExitCode | Should -Be 125
+            ($r.Out + $r.Err) | Should -Match ('my tool: .*rename or delete ' + [regex]::Escape((Join-Path $h 'my tool.exe')))
+            ($r.Out + $r.Err) | Should -Match 'aa: .*declined'
+        }
+        finally {
+            & icacls.exe $h /remove:d $user /T | Out-Null
+        }
+    }
+
     It 'has nothing to refresh when there are no wrappers' {
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--link')
         $r.ExitCode | Should -Be 0
@@ -222,7 +240,7 @@ Describe 'creating, refreshing and removing wrappers' {
     }
 
     It 'removes the named wrappers and leaves the rest' {
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'alpha', 'beta')
+        New-TestWrappers $script:H @('alpha', 'beta')
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--unlink', 'alpha')
         $r.ExitCode | Should -Be 0
         $r.Out | Should -Match 'removed alpha.exe'
@@ -232,7 +250,7 @@ Describe 'creating, refreshing and removing wrappers' {
 
     It 'removes all wrappers with --all, but not wslbin.exe or other programs' {
         Copy-Item "$env:SystemRoot\System32\whoami.exe" (Join-Path $script:H 'foreign.exe')
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'alpha', 'beta')
+        New-TestWrappers $script:H @('alpha', 'beta')
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--unlink', '--all')
         $r.ExitCode | Should -Be 0
         (Get-ChildItem $script:H -Filter *.exe).Name | Should -Be @('foreign.exe', 'wslbin.exe')
@@ -264,28 +282,55 @@ Describe 'creating, refreshing and removing wrappers' {
     }
 
     It 'removes nothing when one of the names in --unlink is invalid' {
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'alpha')
+        New-TestWrappers $script:H @('alpha')
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--unlink', 'alpha', '..\evil')
         $r.ExitCode | Should -Be 125
         Test-Path (Join-Path $script:H 'alpha.exe') | Should -BeTrue
     }
 
     It 'refuses names together with --all in --unlink' {
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'alpha')
+        New-TestWrappers $script:H @('alpha')
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--unlink', '--all', 'alpha')
         $r.ExitCode | Should -Be 125
         $r.Err | Should -Match 'not both'
         Test-Path (Join-Path $script:H 'alpha.exe') | Should -BeTrue
     }
 
+    # --internal-unlink is the half of --unlink that runs with administrator rights, and anyone who can start
+    # wslbin.exe so can call it: it takes names only and repeats every check
+    It '--internal-unlink removes the named wrappers' {
+        New-TestWrappers $script:H @('alpha', 'beta')
+        $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-unlink', 'alpha')
+        $r.ExitCode | Should -Be 0
+        Test-Path (Join-Path $script:H 'alpha.exe') | Should -BeFalse
+        Test-Path (Join-Path $script:H 'beta.exe') | Should -BeTrue
+    }
+
+    It '--internal-unlink refuses <_>, and removes nothing' -ForEach @('..\evil', 'wslbin', 'a b', 'x.exe') {
+        New-TestWrappers $script:H @('alpha')
+        $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-unlink', $_)
+        $r.ExitCode | Should -Be 125
+        (Get-ChildItem $script:H -Filter *.exe).Name | Should -Be @('alpha.exe', 'wslbin.exe')
+    }
+
+    It '--internal-unlink leaves a program that is not a wrapper, and a file outside the folder' {
+        Copy-Item "$env:SystemRoot\System32\whoami.exe" (Join-Path $script:H 'foreign.exe')
+        $outside = Join-Path (Split-Path -Parent $script:H) ('evil-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $outside | Out-Null
+        Copy-Item (Join-Path $script:H 'wslbin.exe') (Join-Path $outside 'evil.exe')
+        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-unlink', 'foreign', "..\$(Split-Path -Leaf $outside)\evil")
+        Test-Path (Join-Path $script:H 'foreign.exe') | Should -BeTrue
+        Test-Path (Join-Path $outside 'evil.exe') | Should -BeTrue
+    }
+
     It 'says "would update" for a wrapper that is there already, in a dry run' {
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'alpha')
+        New-TestWrappers $script:H @('alpha')
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--link', '--dry-run')
         $r.Out | Should -Match 'would update .*alpha.exe'
     }
 
     It 'a wrapper made by --internal-link behaves as a wrapper' {
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'rsync')
+        New-TestWrappers $script:H @('rsync')
         (Invoke-Wslbin -Name 'rsync' -Dir $script:H -Arguments @('--wslbin-explain', '-av', 'C:\x')).Out | Should -BeExactly "rsync -av /mnt/c/x`n"
     }
 }
@@ -377,7 +422,7 @@ Describe 'with real WSL' -Tag 'WSL' -Skip:$NoWsl {
 
     It 'lists each wrapper with what is wrong with it' {
         $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--link', 'rsync', 'make')
-        $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'wslbin-fake-tool', 'ls')
+        New-TestWrappers $script:H @('wslbin-fake-tool', 'ls')
         $stream = [IO.File]::Open((Join-Path $script:H 'make.exe'), 'Append'); $stream.WriteByte(0); $stream.Close()
         $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--list')
         $r.ExitCode | Should -Be 0
@@ -430,7 +475,7 @@ Describe 'with real WSL' -Tag 'WSL' -Skip:$NoWsl {
         }
 
         It 'warns about wrappers with problems' {
-            $null = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Arguments @('--internal-link', 'wslbin-fake-tool')
+            New-TestWrappers $script:H @('wslbin-fake-tool')
             $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--doctor')
             $r.Out | Should -Match '\[warn\] wslbin-fake-tool: not found in WSL'
         }

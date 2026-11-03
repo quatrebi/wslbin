@@ -11,8 +11,9 @@ to it; for the other keys the last one counts.
       the installed ones.
 
   lang = ru
-      Language of help and of wslbin --ai-context: en, ru or auto (the language of Windows).
-      Default: auto.
+      Language of help, of wslbin --ai-context and of the skill that wslbin --install-ai-context
+      writes: en, ru or auto (the language of Windows). Default: auto. (The block that it puts in
+      CLAUDE.md and AGENTS.md is in English whatever this says.)
 
   raw = grep, sed
       Utilities that always get their arguments untouched (like --wslbin-raw). Commas or blanks.
