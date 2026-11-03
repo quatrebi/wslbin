@@ -2,7 +2,7 @@
 
 > wslbin runs Linux utilities from WSL as ordinary Windows programs: PowerShell, cmd, IDEs, any process. A copy of one small .exe named after the utility translates Windows paths, lets bash expand wildcards, and passes standard input and output and the exit code through.
 
-The text below is what an AI agent needs to call Linux utilities on a machine that has wslbin. It is the same text that `wslbin --ai-context` prints. An agent that changes wslbin itself should read AGENTS.md first, then DECISIONS.md (the agreed design, in Russian).
+The text below is what an AI agent needs to call Linux utilities on a machine that has wslbin. It is the same text that `wslbin --ai-context` prints. An agent that changes wslbin itself should read CONTRIBUTING.md first.
 
 # Linux utilities on Windows: wslbin
 

@@ -1,16 +1,18 @@
 # wslbin
 
 [![CI](https://github.com/quatrebi/wslbin/actions/workflows/ci.yml/badge.svg)](https://github.com/quatrebi/wslbin/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/quatrebi/wslbin?include_prereleases)](https://github.com/quatrebi/wslbin/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platform: Windows 10 and 11, WSL 2](https://img.shields.io/badge/platform-Windows%2010%2F11%20%2B%20WSL%202-0078D6)
-![No dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 
-[Русский](README.ru.md)
+**Linux utilities from WSL as ordinary Windows programs.**
 
-Linux utilities from WSL as ordinary Windows programs. `rsync`, `make`, `dig`, `nc`, `man`, a TUI like
-`redis-tui`: type them in PowerShell, cmd, a terminal of an IDE, or start them from any program, with
-Windows paths, wildcards, pipes, colours, `Ctrl+C` and exit codes working the way you expect.
+`rsync`, `make`, `dig`, `nc`, `man`, a TUI like `redis-tui`: type them in PowerShell, cmd, the terminal of
+an IDE, or start them from any program. Windows paths, wildcards, pipes, colours, `Ctrl+C` and exit codes
+work the way you expect.
+
+[Русский](README.ru.md) · [Install](#install) · [Usage](#usage) · [Tab completion](#tab-completion) · [For AI agents](#for-ai-agents) · [Documentation](#documentation)
+
+## Example
 
 ```powershell
 make build
@@ -19,79 +21,47 @@ rsync -av *.log host:/srv/logs/
 dig example.com
 ```
 
-Each utility is a copy of one small `wslbin.exe` named after it (`rsync.exe`, `make.exe`, ...). It
-turns `C:\proj\dist\` into `/mnt/c/proj/dist/`, lets bash expand `*.log` by Linux rules, escapes
-everything else, runs the utility in WSL and returns its exit code. Input and output are not
-intercepted, so pipes and full-screen programs work.
+`--wslbin-explain` prints what would run in WSL, and runs nothing:
 
-> **Status.** It works and is tested, but there is no release yet, so the command below has nothing to
-> download until the first one is made (by a button in Actions). Until then, build it from the source: see
-> [Build and contribute](#build-and-contribute).
+```text
+PS> rsync --wslbin-explain -av C:\proj\dist\ host:/srv/app/
+rsync -av /mnt/c/proj/dist/ host:/srv/app/
+PS> rsync --wslbin-explain -av *.log C:\backup\
+rsync -av *.log /mnt/c/backup/
+```
+
+## What you get
+
+- **One small `.exe`.** Each utility is a copy of `wslbin.exe` named after it (`rsync.exe`, `make.exe`, ...).
+  Nothing else to install in Windows: no .NET, no runtime.
+- **Paths just work.** `C:\proj\dist\` becomes `/mnt/c/proj/dist/`; bash expands `*.log` by Linux rules.
+- **Safe by default.** Nothing typed as an argument can run a second command (`--wslbin-sh` and
+  `wslbin -c` are for when you want Linux to interpret the text).
+- **No middleman.** Input and output are not intercepted: pipes, colours and full-screen programs work, and
+  the exit code of the utility is the exit code you get (125 means wslbin or `wsl.exe` failed).
+
+> **Status.** It works and is tested, but there is no release yet and the site (GitHub Pages) is not
+> published, so the install command below will work after the first release and the first Pages deployment.
+> Until then, build it from the source: see [Build and use from source](CONTRIBUTING.md#build-and-use-from-source).
 
 ## Install
 
-Needs Windows 10 22H2 or Windows 11 with WSL 2 and a distribution. The program is one self-contained
-file and needs nothing else (no .NET, no build tools).
+Needs Windows 10 22H2 or Windows 11 (x64) and WSL 2 with a distribution. The installer runs in Windows
+PowerShell 5.1 and in PowerShell 7.
 
 ```powershell
 irm https://quatrebi.github.io/wslbin/install.ps1 | iex
 ```
 
-That downloads the latest release, checks it, and runs the installer that is in it, in a PowerShell of its
-own (so it works whatever the execution policy of yours; the exit code is in `$LASTEXITCODE`, and nothing of
-the script stays in your session). In a console it asks for what you did not give (for whom to install,
-whether to hook Tab completion in); with `-Quiet` it asks nothing. Parameters go to a script block:
+- It downloads the latest release, checks it and runs the installer that is in it.
+- By default wslbin goes to `%LOCALAPPDATA%\Programs\wslbin` and the PATH of the user, with no administrator
+  rights. In a console it asks for what you did not give: for whom to install, and whether to hook in Tab
+  completion.
+- Parameters (all users, wrappers, completion, a silent run) go to a script block:
 
 ```powershell
-& ([scriptblock]::Create((irm https://quatrebi.github.io/wslbin/install.ps1))) -Version 0.1.7 -Scope AllUsers -Link make,rsync,dig -Completion pwsh,clink -Quiet
+& ([scriptblock]::Create((irm https://quatrebi.github.io/wslbin/install.ps1))) -Scope AllUsers -Link make,rsync -Completion pwsh -Quiet
 ```
-
-`WSLBIN_VERSION` and `WSLBIN_SCOPE` in the environment do the same for the first line. Read the script
-before you run it, if you like: [`site/install.ps1`](site/install.ps1) is short. It reads the list of
-releases from the site (`releases.json`: the address and the SHA256 of each zip), downloads the zip from
-GitHub Releases, checks its SHA256 against `releases.json` (the hash that the release published with the
-zip, which the site checked against GitHub's digest of the file: that catches a damaged or replaced
-download), with `-VerifyAttestation` also that the zip was built by the release workflow of this
-repository from `main` (needs the [gh](https://cli.github.com) program; only this proves where the zip
-comes from), unpacks it into a temporary folder and runs `setup\install.ps1` from it. The zip must be
-exactly `wslbin-<version>-win-x64.zip` of the release `v<version>` of this repository.
-
-The zip (`wslbin-<version>-win-x64.zip` on the [releases page](https://github.com/quatrebi/wslbin/releases),
-with its `.sha256` and `SHA256SUMS.txt`) holds `wslbin.exe`, `LICENSE`, `manifest.json` (every file with
-its SHA256) and `setup\install.ps1`, `setup\uninstall.ps1` and `setup\common.ps1`: unpack it and run
-`.\setup\install.ps1 -Link make,rsync,dig -Completion pwsh,clink` to install without a network.
-
-By default wslbin is installed for you: `%LOCALAPPDATA%\Programs\wslbin`, the PATH of the user, no
-administrator rights, and your `wslbin.ini` and `wslbin --link` need none either. When wslbin is installed
-for all users already, the default is to update that installation. `-Scope AllUsers` puts it in
-`C:\Program Files\wslbin` and the PATH of the machine, and asks for administrator rights (UAC); another
-folder (`-InstallDir`) must be one that only administrators can change, and a new one is made so. A folder
-that holds files with the names of wslbin's (`LICENSE`, `manifest.json`, `setup\`) and is not an
-installation of wslbin is refused in either scope: they belong to something else. The copy
-that has the rights installs the program and nothing more, from a folder that only administrators can
-write to, after it has checked the SHA256 of every file again; its window shows what it did. It runs no
-program from the install folder. This protects against changes made after the check; what you run the
-installer from is yours to trust, as with any installer. `-Link` and
-`-Completion` are done afterwards as you, in your WSL and your profiles (so `-Link` asks for the rights
-once more, to write the wrappers). `-Completion` hooks Tab completion into PowerShell (both editions) and
-Clink, and warns when the execution policy of a PowerShell would not run the profile (then:
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`). An installation for the other scope is named before
-the new one is made: the one for all users comes first in PATH, so it is the one that runs.
-
-**Update** is the same command: it compares the version with the one in Settings > Apps, installs a newer
-one, says "installed already" for the same one (`-Force` installs it again; a folder that lacks
-`wslbin.exe` is installed again anyway) and refuses an older one (`-Force` goes back). Files are replaced
-all together or not at all; the running `wslbin.exe` and the wrappers are renamed to `.old` first and
-deleted at once or at the next run. Files that the new version no longer has are deleted. Your
-`wslbin.ini` is not touched. A scope holds one installation: a second one in another folder is refused.
-
-**Remove**: Settings > Apps > wslbin > Uninstall, or `setup\uninstall.ps1` in the install folder
-(`-Quiet` asks nothing, `-Purge` deletes `wslbin.ini` too; run from an unpacked zip, it looks for the
-installation in the usual places and leaves the zip's files alone). It takes out the wrappers, the PATH entry
-(only if the installer added it), the files, the entry in Apps, the hooks in the profiles and Clink (those
-of an installation that stays are kept), and the block for AI agents. While a wrapper runs, nothing is
-removed but the wrappers that can be: close it and run the uninstall again. The installer writes nothing
-else to the registry.
 
 Then:
 
@@ -101,7 +71,10 @@ wslbin --link make rsync   # more wrappers; offers to install a missing utility 
 wslbin --list              # wrappers and what is wrong with them
 ```
 
-## Use
+All parameters, what the checks prove, update, removal and install without a network:
+[INSTALL.md](INSTALL.md).
+
+## Usage
 
 | You want | You type |
 | --- | --- |
@@ -112,77 +85,49 @@ wslbin --list              # wrappers and what is wrong with them
 | what will run, without running it | `rsync --wslbin-explain -av *.log C:\backup\` |
 | a pipeline inside Linux | `wslbin -c "ls *.log \| wc -l"` |
 
-By default Windows paths become Linux paths, bash expands `*`, `?`, `[...]` and a leading `~`, and
-everything else (`$`, `;`, `|`, `&`, quotes, braces, spaces) reaches the utility literally. Nothing
-typed as an argument can run a second command. A relative path with backslashes (`.\file`, `src\a.c`,
-what Tab completion writes) is translated when that file or folder exists in the current folder, and
-left as typed when it does not (`.\d+` stays a regular expression). PowerShell and cmd remove quotes
-before wslbin starts, so `grep 'a*' f` arrives as `a*`: use `--wslbin-raw` for that.
+The options `--wslbin-raw`, `--wslbin-sh` and `--wslbin-explain` go right after the name of the utility, and
+only there; anything later belongs to the utility. By default:
 
-Help is in the program, in English and Russian: `wslbin --help`, and `wslbin --help` followed by
-`modes`, `paths`, `globs`, `env`, `completion`, `config` or `troubleshooting`. The same texts are in
-[`docs/en`](docs/en). Settings (`distro`, `raw`, `sh`, `pass_env`, `path`, `args.<utility>`, `lang`)
-live in `wslbin.ini` next to `wslbin.exe`: `wslbin --help config`.
+- Windows paths become Linux paths. A relative path with backslashes is translated only when that file or
+  folder exists in the current folder (`wslbin --help paths`).
+- bash expands `*`, `?`, `[...]` and a leading `~`; everything else (`$`, `;`, `|`, `&`, quotes, braces,
+  spaces) reaches the utility literally.
+- PowerShell and cmd remove quotes before wslbin starts, so `grep 'a*' f` arrives as `a*`: use
+  `--wslbin-raw` for that.
+
+Help is in the program, in English and Russian: `wslbin --help`, and `wslbin --help` followed by `modes`,
+`paths`, `globs`, `env`, `completion`, `config` or `troubleshooting`. Settings (`distro`, `raw`, `sh`,
+`pass_env`, `path`, `args.<utility>`, `lang`) live in `wslbin.ini` next to `wslbin.exe`:
+`wslbin --help config`.
 
 ## Tab completion
 
 The variants come from bash-completion in WSL, so `rsync --<Tab>`, `make <Tab>` or `man <Tab>` give what
-they give in Linux, and Windows paths work both ways (`C:\Prog` becomes `C:\Program Files\`).
-In PowerShell, put `wslbin --init pwsh | Invoke-Expression` in the profile; in cmd, `wslbin --init clink`
-(needs [Clink](https://chrisant996.github.io/clink/)). The installer's `-Completion pwsh,clink` does both.
-The PowerShell line also removes the aliases that would hide a wrapper (`ls`, `cat`, `rm`, ...), for
-the whole session and every script in it: make wrappers only for names that you want to mean the
-Linux tool.
+they give in Linux, and Windows paths work both ways (`C:\Prog` becomes `C:\Program Files\`). It needs the
+`bash-completion` package in WSL (`wslbin --doctor` checks it).
+
+In PowerShell, put this in the profile; in cmd, `wslbin --init clink` (needs
+[Clink](https://chrisant996.github.io/clink/)). The installer's `-Completion pwsh,clink` does both.
+
+```powershell
+wslbin --init pwsh | Invoke-Expression
+```
+
+The PowerShell line also removes the aliases that would hide a wrapper (`ls`, `cat`, `rm`, ...), for the
+whole session and every script in it: make wrappers only for names that you want to mean the Linux tool.
 
 ## For AI agents
 
-`wslbin --ai-context` prints how an agent should call Linux utilities on this machine (the same text
-as [`llms.txt`](llms.txt)). `wslbin --install-ai-context` adds a short marked block to the
-instructions of Claude Code (`CLAUDE.md`, and a skill) and Codex (`AGENTS.md`); `--remove` takes it
-out again. Agents that work on wslbin itself: read [`AGENTS.md`](AGENTS.md).
+`wslbin --ai-context` prints how an agent should call Linux utilities on this machine (the same text as
+[`llms.txt`](llms.txt)). `wslbin --install-ai-context` adds a short marked block to the instructions of
+Claude Code (`CLAUDE.md`, and a skill) and Codex (`AGENTS.md`); `--remove` takes it out again. Agents that
+work on wslbin itself: start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Build and contribute
+## Documentation
 
-Needs the [.NET SDK 10](https://dotnet.microsoft.com/download), the C++ build tools of Visual Studio
-(the workload "Desktop development with C++"), git 2.31 or later (the version is worked out from its
-history) and access to nuget.org until the NuGet packages of the AOT compiler and of the runtime are in
-the cache (the first build, and after an update of the SDK).
-The program is published as Native AOT: one self-contained `.exe` that every wrapper copies.
-
-```powershell
-.\build.ps1                                        # bin\wslbin.exe, with the version of this checkout
-.\get-version.ps1                                  # that version, as SemVer 2.0
-Invoke-Pester .\tests                              # everything (needs WSL; Clink tests need Clink)
-Invoke-Pester .\tests -ExcludeTagFilter WSL        # what needs neither (this is what CI runs)
-```
-
-The program is C# on .NET 10 in [`src/`](src), one file for each area; [`src/wslbin.cs`](src/wslbin.cs)
-has the entry point and a map of the others. The tests are Pester 5 in PowerShell 7.
-[`DECISIONS.md`](DECISIONS.md) (in Russian) holds every agreed decision and what was found out on
-the way; agents that work on wslbin read [`AGENTS.md`](AGENTS.md).
-
-Versions are automatic (SemVer 2.0). `MAJOR.MINOR` is `VersionPrefix` in
-[`wslbin.csproj`](wslbin.csproj): it is the one thing a pull request changes by hand, and it is never
-lowered. `PATCH` is the number of commits since that value first appeared, and the rest says where a
-build comes from: `0.1.4-develop.42+33c8830` is the 42nd run of the CI, on `develop`, at that commit; a
-release has no suffix. Builds of different branches never have the same version, and
-`wslbin --version` prints it.
-
-```
-src/               the program
-wslbin.csproj      the project: MAJOR.MINOR of the version, what is built into the .exe
-data/              utilities that have a Windows version of their own (built into the .exe)
-wsl/complete.sh    completion helper that runs in WSL
-shell/             PowerShell and Clink code that "wslbin --init" fills in
-docs/en  docs/ru   help texts (built into the .exe)
-setup/             install.ps1, uninstall.ps1 and what they share: they go into the release zip
-site/              the site (GitHub Pages): the landing page and install.ps1, the loader
-build.ps1          the build (dotnet publish, Native AOT)
-get-version.ps1    the version of a build; its functions are in Wslbin.Version.psm1
-tests/             Pester tests
-.github/workflows/ CI and release
-LICENSE            MIT
-```
+- [INSTALL.md](INSTALL.md): the installer in detail (parameters, scope, checks, update, removal, offline).
+- [`docs/en`](docs/en): the help texts of the program (`wslbin --help`).
+- [CONTRIBUTING.md](CONTRIBUTING.md): build from source, tests, versions, layout of the repository.
 
 ## License
 

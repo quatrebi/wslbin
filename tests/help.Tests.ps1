@@ -179,42 +179,86 @@ Describe 'the READMEs' {
         }
     }
 
-    It 'link to each other' {
+    # The documents of the root: the READMEs, the installer's page (INSTALL, in both languages) and the
+    # page for contributors (CONTRIBUTING, English only). They are not in docs/, which holds the help topics.
+    It 'link to each other, and the READMEs lead to the installer page of their language' {
         (Read-Readme 'README.md') | Should -Match '\(README\.ru\.md\)'
         (Read-Readme 'README.ru.md') | Should -Match '\(README\.md\)'
+        (Read-Readme 'INSTALL.md') | Should -Match '\(INSTALL\.ru\.md\)'
+        (Read-Readme 'INSTALL.ru.md') | Should -Match '\(INSTALL\.md\)'
+        (Read-Readme 'README.md') | Should -Match '\(INSTALL\.md[)#]'
+        (Read-Readme 'README.ru.md') | Should -Match '\(INSTALL\.ru\.md[)#]'
     }
 
-    It '<File> mentions only wslbin options that exist' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }) {
+    It '<File> mentions only wslbin options that exist' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }, @{ File = 'INSTALL.md' }, @{ File = 'INSTALL.ru.md' }, @{ File = 'CONTRIBUTING.md' }) {
         Get-WslbinOptions (Read-Readme $File) | Where-Object { $_ -notin $script:KnownOptions } | Should -BeNullOrEmpty
     }
 
-    It '<File> uses only install.ps1 parameters that exist' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }) {
+    It '<File> uses only install.ps1 parameters that exist' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }, @{ File = 'INSTALL.md' }, @{ File = 'INSTALL.ru.md' }) {
         $used = Get-InstallParameters (Read-Readme $File)
         @($used).Count | Should -BeGreaterThan 3
         $used | Where-Object { $_ -notin $script:InstallParameters } | Should -BeNullOrEmpty
     }
 
-    It 'name the same options and the same install parameters in both languages' {
-        $en = Read-Readme 'README.md'; $ru = Read-Readme 'README.ru.md'
+    It 'name the same options and the same install parameters in both languages (<En> and <Ru>)' -ForEach @(@{ En = 'README.md'; Ru = 'README.ru.md' }, @{ En = 'INSTALL.md'; Ru = 'INSTALL.ru.md' }) {
+        $en = Read-Readme $En; $ru = Read-Readme $Ru
         Get-WslbinOptions $ru | Should -Be (Get-WslbinOptions $en)
         Get-InstallParameters $ru | Should -Be (Get-InstallParameters $en)
     }
 
-    It 'describe the same sections in both languages' {
-        $headings = { param($t) @([regex]::Matches($t, '(?m)^## ').Count) }
-        (& $headings (Read-Readme 'README.ru.md')) | Should -Be (& $headings (Read-Readme 'README.md'))
+    It 'describe the same sections in both languages (<En> and <Ru>)' -ForEach @(@{ En = 'README.md'; Ru = 'README.ru.md' }, @{ En = 'INSTALL.md'; Ru = 'INSTALL.ru.md' }) {
+        # the number of headings of each level, outside the code blocks
+        $headings = {
+            param($t)
+            $outside = [regex]::Replace($t, '(?ms)^```.*?^```', '')
+            @([regex]::Matches($outside, '(?m)^(#{1,6}) ') | ForEach-Object { $_.Groups[1].Value.Length })
+        }
+        (& $headings (Read-Readme $Ru)) | Should -Be (& $headings (Read-Readme $En))
     }
 
     # (`$LASTEXITCODE` once came out as ``: PowerShell had put its own variable in, which was empty)
-    It '<File> has no empty piece of code' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }) {
+    It '<File> has no empty piece of code' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }, @{ File = 'INSTALL.md' }, @{ File = 'INSTALL.ru.md' }, @{ File = 'CONTRIBUTING.md' }) {
         [regex]::Matches((Read-Readme $File), '(?<!`)``(?!`)').Count | Should -Be 0
     }
 
-    It '<File> opens every code block with three backticks and closes it' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }) {
+    It '<File> opens every code block with three backticks and closes it' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }, @{ File = 'INSTALL.md' }, @{ File = 'INSTALL.ru.md' }, @{ File = 'CONTRIBUTING.md' }) {
         $text = Read-Readme $File
         # a block opened with one backtick ("`powershell") pairs every fence after it the wrong way round
         [regex]::Matches($text, '(?m)^`[a-z]+$').Count | Should -Be 0
         @([regex]::Matches($text, '(?m)^```')).Count % 2 | Should -Be 0
+    }
+
+    It '<File> is UTF-8 without a byte order mark, with Unix line ends' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }, @{ File = 'INSTALL.md' }, @{ File = 'INSTALL.ru.md' }, @{ File = 'CONTRIBUTING.md' }) {
+        $bytes = [IO.File]::ReadAllBytes((Join-Path $script:Repo $File))
+        ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
+        $bytes -contains 13 | Should -BeFalse
+        { [Text.UTF8Encoding]::new($false, $true).GetString($bytes) } | Should -Not -Throw
+    }
+
+    # A link to a file or to a heading that is not there is a dead link on GitHub: the files, and the anchors
+    # (GitHub's rule: lower case, only letters, digits, - and _ stay, spaces become -), are checked.
+    It '<File>: every relative link names a file that exists, and every #anchor a heading that exists' -ForEach @(@{ File = 'README.md' }, @{ File = 'README.ru.md' }, @{ File = 'INSTALL.md' }, @{ File = 'INSTALL.ru.md' }, @{ File = 'CONTRIBUTING.md' }) {
+        $slugsOf = {
+            param($t)
+            $outside = [regex]::Replace($t, '(?ms)^```.*?^```', '')
+            foreach ($m in [regex]::Matches($outside, '(?m)^#{1,6}\s+(.+?)\s*$')) {
+                $s = $m.Groups[1].Value.ToLowerInvariant().Replace('`', '').Replace('*', '')
+                ([regex]::Replace($s, '[^\p{L}\p{N}\p{M} _-]', '')).Replace(' ', '-')
+            }
+        }
+        $text = Read-Readme $File
+        $outside = [regex]::Replace($text, '(?ms)^```.*?^```', '')
+        $links = [regex]::Matches($outside, '\]\((?<target>[^)\s]+)\)') | ForEach-Object { $_.Groups['target'].Value } | Where-Object { $_ -notmatch '^(https?:|mailto:)' }
+        @($links).Count | Should -BeGreaterThan 0
+        foreach ($link in $links) {
+            # (not $file and $anchor: PowerShell names ignore case, so $file would be $File, the file under test)
+            $linkFile, $linkAnchor = $link -split '#', 2
+            $linkedDocument = if ($linkFile) { $linkFile } else { $File }
+            Test-Path -LiteralPath (Join-Path $script:Repo $linkedDocument) | Should -BeTrue -Because "$File links to $link"
+            if ($linkAnchor -and $linkedDocument -match '\.md$') {
+                @(& $slugsOf (Read-Readme $linkedDocument)) | Should -Contain $linkAnchor -Because "$File links to $link"
+            }
+        }
     }
 }
 
