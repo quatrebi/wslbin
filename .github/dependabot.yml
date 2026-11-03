@@ -1,0 +1,12 @@
+# Keeps the actions of the workflows up to date. They are pinned to commits (the comment names the tag);
+# Dependabot proposes the new commit and tag in a pull request. The nuget ecosystem is added with the
+# test project of .NET, when there are PackageReferences to watch.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(github)"
+    open-pull-requests-limit: 5

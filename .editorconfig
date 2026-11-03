@@ -1,0 +1,68 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.cs]
+indent_size = 4
+dotnet_sort_system_directives_first = true
+dotnet_style_qualification_for_field = false
+dotnet_style_qualification_for_property = false
+dotnet_style_qualification_for_method = false
+
+# Modern C# (DECISIONS.md 15.12), enforced by the build (EnforceCodeStyleInBuild, TreatWarningsAsErrors):
+# a rule that is only a suggestion is a rule that the code drifts away from.
+csharp_style_namespace_declarations = file_scoped
+dotnet_diagnostic.IDE0161.severity = warning
+# collection expressions: [] and [a, b] instead of new List<T>(), new[] { }, { a, b }
+dotnet_style_prefer_collection_expression = when_types_loosely_match
+dotnet_diagnostic.IDE0028.severity = warning
+dotnet_diagnostic.IDE0300.severity = warning
+dotnet_diagnostic.IDE0301.severity = warning
+dotnet_diagnostic.IDE0303.severity = warning
+dotnet_diagnostic.IDE0305.severity = warning
+# out var
+csharp_style_inlined_variable_declaration = true
+dotnet_diagnostic.IDE0018.severity = warning
+# using var
+csharp_prefer_simple_using_statement = true
+dotnet_diagnostic.IDE0063.severity = warning
+# new() where the type is plain to see
+csharp_style_implicit_object_creation_when_type_is_apparent = true
+dotnet_diagnostic.IDE0090.severity = warning
+# ?? and ?.
+dotnet_style_coalesce_expression = true
+dotnet_style_null_propagation = true
+dotnet_diagnostic.IDE0029.severity = warning
+dotnet_diagnostic.IDE0030.severity = warning
+dotnet_diagnostic.IDE0031.severity = warning
+dotnet_diagnostic.IDE0270.severity = warning
+# s[1..^1] and s[^1] instead of Substring and s[s.Length - 1]
+csharp_style_prefer_range_operator = true
+csharp_style_prefer_index_operator = true
+dotnet_diagnostic.IDE0056.severity = warning
+dotnet_diagnostic.IDE0057.severity = warning
+# x is null, x is A or B
+csharp_style_prefer_pattern_matching = true
+csharp_style_prefer_not_pattern = true
+dotnet_diagnostic.IDE0078.severity = warning
+dotnet_diagnostic.IDE0083.severity = warning
+# what can be readonly is
+dotnet_style_readonly_field = true
+dotnet_diagnostic.IDE0044.severity = warning
+# no value assigned and never read, no parameter that is never used
+dotnet_diagnostic.IDE0059.severity = warning
+dotnet_diagnostic.IDE0060.severity = warning
+
+[*.{ps1,psm1}]
+indent_size = 4
+
+[*.{yml,yaml,json,csproj,props}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false

@@ -1,0 +1,39 @@
+wslbin - Linux-утилиты из WSL как обычные программы Windows
+
+Использование
+  <утилита> [--wslbin-raw | --wslbin-sh] [--wslbin-explain] [аргументы]
+      Копия wslbin.exe с именем утилиты (rsync.exe, make.exe, ...) запускает её в WSL.
+  wslbin [--raw | --sh] [--explain] <утилита> [аргументы]
+      Любая утилита из WSL, без копии: wslbin htop
+  wslbin [--explain] -c "<строка bash>"
+      Строка bash целиком: конвейеры, &&, перенаправления внутри Linux.
+
+Как обрабатываются аргументы (опции идут первыми)
+  (нет)              умный режим: пути Windows становятся путями Linux, bash раскрывает * ? [..] и
+                     ведущую ~, всё остальное ($ ; | & кавычки скобки пробелы) передаётся буквально
+  --wslbin-sh        умный, плюс переменные и $(...) Linux в аргументах с $ или `
+  --wslbin-raw       аргументы ровно как набраны: без путей, шаблонов и переменных
+  --wslbin-explain   напечатать команду bash вместо запуска
+
+Обёртки
+  wslbin --link [-y] [--dry-run] [<утилита>...]   создать или обновить обёртки (без имён: обновить все);
+                                                  -y (--yes) ставит через apt утилиту, которой нет в WSL
+  wslbin --unlink (<утилита>... | --all)          убрать обёртки
+  wslbin --list [--names]                         обёртки и что с ними не так
+  wslbin --doctor                                 проверить WSL, bash, дополнение, PATH, обёртки, конфиг
+
+Оболочки
+  wslbin --init pwsh | Invoke-Expression          автодополнение в PowerShell (строку - в профиль)
+  wslbin --init clink                             автодополнение в cmd (нужен Clink)
+
+Для ИИ-агентов
+  wslbin --ai-context                             как агенту вызывать Linux-утилиты
+  wslbin --install-ai-context                     положить это туда, где читают Claude Code и Codex
+      [--remove] [--dry-run] [--claude | --codex] [--claude-dir <папка>] [--codex-dir <папка>]
+
+Ещё
+  wslbin --help <тема>      темы: modes, paths, globs, env, completion, config, troubleshooting
+  wslbin --version
+
+Коды выхода: код самой утилиты. 125: сбой самого wslbin или WSL. 126 и 127 даёт bash (не удалось
+запустить, не найдено). Настройки лежат в wslbin.ini рядом с wslbin.exe (wslbin --help config).

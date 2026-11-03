@@ -1,0 +1,74 @@
+# Publishes the site to GitHub Pages: the landing page and the loader (site/index.html and site/install.ps1,
+# named one by one: nothing else of site/ is published) and releases.json, the list of the releases
+# with the address and the SHA256 of the zip of each, which .github/new-releases-json.ps1 makes
+# from the releases of the repository. One deployment replaces the whole site, so this is the only
+# workflow that deploys, and releases.json is in every deployment of it.
+# It runs when the site changes on main, by hand, and after every release (release.yml calls it).
+# One-time setup in the repository: Settings > Pages > Source: "GitHub Actions".
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+      - '.github/new-releases-json.ps1'
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      page_url:
+        value: ${{ jobs.deploy.outputs.page_url }}
+        description: The address of the site
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read   # configure-pages asks the Pages API about the site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: The site, with the list of the releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          # the files of the site by name: a draft that lies in site/ is not published
+          New-Item -ItemType Directory -Path _site | Out-Null
+          foreach ($file in 'index.html', 'install.ps1') { Copy-Item -LiteralPath (Join-Path site $file) -Destination _site }
+          ./.github/new-releases-json.ps1 -Repository $env:REPOSITORY -Output _site/releases.json
+          Get-Content _site/releases.json
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

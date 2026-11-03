@@ -1,0 +1,39 @@
+wslbin - run Linux utilities from WSL as ordinary Windows programs
+
+Usage
+  <utility> [--wslbin-raw | --wslbin-sh] [--wslbin-explain] [arguments]
+      A copy of wslbin.exe named after the utility (rsync.exe, make.exe, ...) runs it in WSL.
+  wslbin [--raw | --sh] [--explain] <utility> [arguments]
+      Any utility from WSL, without a copy: wslbin htop
+  wslbin [--explain] -c "<bash string>"
+      A whole bash string: pipes, &&, redirections inside Linux.
+
+How arguments are handled (the options go first)
+  (none)             smart: Windows paths become Linux paths, bash expands * ? [..] and a leading ~,
+                     everything else ($ ; | & quotes braces spaces) is passed literally
+  --wslbin-sh        smart, plus Linux variables and $(...) in arguments that contain $ or `
+  --wslbin-raw       arguments exactly as typed: no paths, no wildcards, no variables
+  --wslbin-explain   print the bash command instead of running it
+
+Wrappers
+  wslbin --link [-y] [--dry-run] [<utility>...]   create or refresh wrappers (no names: refresh all);
+                                                  -y (--yes) installs a utility that WSL lacks with apt
+  wslbin --unlink (<utility>... | --all)          remove wrappers
+  wslbin --list [--names]                         wrappers and what is wrong with them
+  wslbin --doctor                                 check WSL, bash, completion, PATH, wrappers, config
+
+Shells
+  wslbin --init pwsh | Invoke-Expression          Tab completion in PowerShell (put the line in the profile)
+  wslbin --init clink                             Tab completion in cmd (needs Clink)
+
+For AI agents
+  wslbin --ai-context                             how an agent should call Linux utilities
+  wslbin --install-ai-context                     put that where Claude Code and Codex read it
+      [--remove] [--dry-run] [--claude | --codex] [--claude-dir <folder>] [--codex-dir <folder>]
+
+More
+  wslbin --help <topic>     topics: modes, paths, globs, env, completion, config, troubleshooting
+  wslbin --version
+
+Exit codes: the utility's own. 125: wslbin or WSL itself failed. 126 and 127 come from bash
+(cannot run, not found). Settings live in wslbin.ini next to wslbin.exe (wslbin --help config).

@@ -1,0 +1,30 @@
+<Project>
+
+  <!-- Settings shared by every project of the repository. -->
+  <PropertyGroup>
+    <!-- Pinned, as AnalysisLevel is: a newer SDK (global.json rolls forward to the latest feature band)
+         must not bring a new language or new rules that fail the build without a change of the code. -->
+    <LangVersion>14</LangVersion>
+    <!-- Both are on for the whole program (DECISIONS.md 15.12): a null that is not allowed for is a build error. -->
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- [LibraryImport] generates its marshalling code, and that code is unsafe -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <!-- the recommended rules of .NET 10: the code has no warning of them (DECISIONS.md 15.12) -->
+    <AnalysisLevel>10.0-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <!--
+      Not set, on purpose: UseSystemResourceKeys (the texts of system exceptions would
+      become keys in the "internal error" message).
+    -->
+  </PropertyGroup>
+
+</Project>

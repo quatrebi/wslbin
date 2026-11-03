@@ -1,0 +1,66 @@
+# wslbin
+
+> wslbin runs Linux utilities from WSL as ordinary Windows programs: PowerShell, cmd, IDEs, any process. A copy of one small .exe named after the utility translates Windows paths, lets bash expand wildcards, and passes standard input and output and the exit code through.
+
+The text below is what an AI agent needs to call Linux utilities on a machine that has wslbin. It is the same text that `wslbin --ai-context` prints. An agent that changes wslbin itself should read CONTRIBUTING.md first.
+
+# Linux utilities on Windows: wslbin
+
+Linux utilities from WSL run on this machine as ordinary Windows programs, through wslbin. Call
+them by name from PowerShell or cmd, as if they were native: no `wsl` prefix, no `bash -c`.
+
+## Find out what is available
+
+- `wslbin --list` shows the wrapped utilities and what is wrong with each.
+- A utility that has no wrapper still works: `wslbin <utility> <arguments>` (for example `wslbin htop`).
+- `wslbin --link <utility>` makes a wrapper, so that it can be called by name. If the utility is not
+  in WSL it offers to install the apt package.
+- `wslbin --doctor` checks the setup and says what to fix.
+
+## Arguments
+
+- **Windows paths** (`C:\proj\a.txt`, `C:/proj/a.txt`, `--out=C:\x`, `-IC:\inc`) become Linux paths
+  (`/mnt/c/proj/a.txt`) by themselves. A relative path with backslashes (`.\file` from PowerShell's
+  Tab key, `src\main.c`) is translated only if that file or folder exists in the current folder;
+  one that does not exist yet is passed as typed. Write relative paths with forward slashes
+  (`src/main.c`) and they always arrive as they are.
+- **Wildcards** `*`, `?`, `[...]` and a leading `~` are expanded by bash, in the current folder, by
+  Linux rules. A pattern that matches nothing is passed on as it is.
+- **Everything else is literal**: spaces, quotes, `$`, `;`, `|`, `&`, braces. Nothing typed as an
+  argument can run another command.
+- **PowerShell and cmd remove quotes before wslbin starts.** `grep 'a*' f` reaches wslbin as `a*`
+  and bash expands it if files start with `a`. To pass an argument exactly as typed, put
+  `--wslbin-raw` first: `grep --wslbin-raw 'a*' f`.
+- **Linux variables and `$(...)`** need `--wslbin-sh` first:
+  `make --wslbin-sh 'OUT=$HOME/out' 'TAG=$(git rev-parse --short HEAD)'`. Use single quotes in
+  PowerShell, or PowerShell substitutes its own variables.
+- **Pipes, `&&`, redirections inside Linux**: `wslbin -c "ls *.log | wc -l"`. Between two commands
+  in PowerShell or cmd, `|` and `>` work as usual: input and output are passed through unchanged,
+  so interactive programs, colours and Ctrl+C work.
+- **See what will run** without running it: put `--wslbin-explain` first,
+  `rsync --wslbin-explain -av *.log C:\backup\` prints `rsync -av *.log /mnt/c/backup/`.
+
+The options (`--wslbin-raw`, `--wslbin-sh`, `--wslbin-explain`) are recognised only at the start of
+the arguments, and can be combined.
+
+## Results
+
+- The exit code is the utility's. `125` means wslbin or WSL itself failed (WSL not installed
+  included), `127` that the command is not found in WSL.
+- Standard input, output and error are passed through untouched; the utility's errors stay on
+  standard error. PowerShell decodes what a program writes with `[Console]::OutputEncoding`: for
+  output with letters outside ASCII (Linux utilities write UTF-8), set
+  `[Console]::OutputEncoding = [Text.Encoding]::UTF8` first.
+
+## Mistakes to avoid
+
+- Do not prefix with `wsl` or `bash -c`: that loses path translation and adds quoting problems.
+- Do not rely on `\` in the name of a file that does not exist yet, nor on `{a,b}` brace expansion
+  (braces are literal).
+- A name like `ls`, `cat`, `man` may be a PowerShell alias; if the wrapper does not run, call
+  `ls.exe` or run `wslbin --doctor`.
+- Do not run a utility from a network folder (`\\server\share`): wslbin refuses with `125`,
+  because the utility would run in the Linux home folder. Change to a folder on a drive.
+- Tools installed under `~/.local/bin` or `~/.cargo/bin` need `path = ~/.local/bin` in `wslbin.ini`
+  (next to `wslbin.exe`); `wslbin --doctor` says when that is the problem.
+- More: `wslbin --help` and `wslbin --help <modes|paths|globs|env|completion|config|troubleshooting>`.

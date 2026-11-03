@@ -1,0 +1,42 @@
+Modes: what happens to the arguments
+
+The options below go first, right after the utility, and only there. Anything later belongs to the
+utility. Several can be combined: rsync --wslbin-sh --wslbin-explain ...
+
+smart (the default)
+  - An absolute Windows path becomes a Linux path: C:\x\y -> /mnt/c/x/y (see: wslbin --help paths).
+  - bash expands the wildcards * ? [...] and a leading ~ by Linux rules (see: wslbin --help globs).
+  - Everything else is passed literally: spaces inside an argument, quotes, $, `, ;, |, &, < >,
+    braces. So awk '{print $1, $2}' works, and nothing typed can run a second command.
+
+--wslbin-sh
+  Everything smart does, plus Linux variables and command substitution in an argument that contains
+  $ or `: bash substitutes $HOME, ${VAR}, $(command), `command`, and the result stays one argument.
+      make --wslbin-sh 'OUT=$HOME/out' 'TAG=$(git rev-parse --short HEAD)'
+  ; | & stay text here too. In PowerShell write such arguments in single quotes, or PowerShell
+  substitutes its own variables first. Wildcards are not expanded in an argument that has $ or `.
+  A literal $ cannot be written in this mode: use smart for that.
+
+--wslbin-raw
+  The arguments reach the utility exactly as typed: no path translation, no wildcards, no variables.
+      grep --wslbin-raw 'a*' file.txt
+
+--wslbin-explain
+  Prints the bash command that would run (on standard output), and runs nothing. Warnings and the
+  Windows variables that would be passed go to standard error.
+      rsync --wslbin-explain -av *.log C:\backup\      ->  rsync -av *.log /mnt/c/backup/
+
+wslbin -c "<bash string>"
+  The string goes to bash as it is: pipelines, &&, ||, redirections, loops. Windows paths in it are
+  not translated. Further arguments become $0, $1, ... of the string, as with bash -c.
+      wslbin -c "ls *.log | wc -l"
+
+Always the same mode for a utility: in wslbin.ini, raw = grep, sed   and   sh = make
+(an option on the command line wins).
+
+The quotes you type are removed by PowerShell and cmd before wslbin starts. grep 'a*' file.txt
+arrives as a*, and if files whose names begin with a exist, bash substitutes them, as in Linux
+without quotes. For arguments like that use --wslbin-raw.
+
+Variables of the shell you type in (PowerShell: $env:NAME, $(...); cmd: %NAME%) are always
+substituted by that shell, in every mode, before wslbin sees the argument.

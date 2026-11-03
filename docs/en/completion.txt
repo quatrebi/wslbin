@@ -1,0 +1,41 @@
+Tab completion
+
+The variants come from bash-completion inside WSL: the same code bash runs when you press Tab, so
+rsync --<Tab>, make <Tab> (targets of the Makefile in the current folder), man <Tab>, git <Tab>
+give what they give in a Linux terminal. Windows paths work in both directions: you type C:\Prog,
+you get C:\Program Files\ (drive letter case and slashes as you typed them), names with spaces and
+non-ASCII names included. Needs the bash-completion package in WSL (wslbin --doctor checks it).
+
+PowerShell (Windows PowerShell 5.1 and PowerShell 7)
+  Add one line to the profile ($PROFILE):
+      wslbin --init pwsh | Invoke-Expression
+  (wslbin --init pwsh prints its code as one encoded line, so that Invoke-Expression runs it whole.)
+  It registers a completer for every wrapper and for wslbin itself. It also removes the PowerShell
+  aliases and functions that would hide a wrapper (ls, cat, man, curl, ...): a wrapper is
+  something you asked for, and PowerShell would otherwise run its own command first. They are gone
+  for the whole session, also for the scripts that run in it: after wslbin --link rm, a script's
+  rm is the Linux one. Make wrappers only for names that you want to mean the Linux tool.
+  Wrappers made after the session started are completed in the next session. To have them at once
+  in PowerShell 7.6 and later:
+      wslbin --init pwsh --native-fallback | Invoke-Expression
+  (there is one such fallback handler per session, so it would replace the one of another tool:
+  that is why it is not the default.)
+
+cmd (needs Clink, https://chrisant996.github.io/clink/)
+  wslbin --init clink
+  writes wslbin.lua into the Clink scripts folder (the state folder that "clink info" shows;
+  --dir <folder> names another one). New cmd windows use it. Wrappers made later are completed
+  without writing it again.
+
+bash inside WSL needs nothing: bash-completion is already there.
+
+What is completed
+  - the options and arguments of a wrapper;
+  - --wslbin-raw, --wslbin-sh, --wslbin-explain right after the utility (--w<Tab>);
+  - wslbin's own options, and after them: wrappers (--unlink), help topics (--help), shells (--init),
+    the options of --install-ai-context, names of Linux commands (wslbin <Tab>, --link <Tab>).
+
+Speed: one request is one call of wsl.exe, about a quarter of a second (man: about half a second).
+A WSL that has not answered within 10 seconds is given up on, and Tab offers nothing. In a folder
+that has no Linux path (a network path) nothing is offered either.
+If nothing is offered: wslbin --doctor; WSLBIN_DEBUG=1 makes wslbin --complete print its errors.
