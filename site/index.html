@@ -5,318 +5,690 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>wslbin: Linux utilities as Windows programs</title>
 <meta name="description" content="Run rsync, make, dig and other Linux tools from WSL in PowerShell, cmd or any IDE, with Windows paths, wildcards, pipes and exit codes working as expected.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#f8f9fb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
 <meta property="og:title" content="wslbin">
 <meta property="og:description" content="Linux utilities from WSL as ordinary Windows programs.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1720'/%3E%3Cpath d='M8 11l7 5-7 5' fill='none' stroke='%23ffb454' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M18 22h7' stroke='%2354a0ff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff7a45'/%3E%3Cpath d='M9 10l6 6-6 6' fill='none' stroke='%232a0d02' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M17 22h6' stroke='%232a0d02' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <script>
-/* set the theme before the first paint, so there is no flash */
-try { var t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+/* before the first paint: scripts run (js), the saved theme, the language, and whether motion is welcome */
+(function () {
+  var d = document.documentElement, l = null;
+  d.classList.add('js');
+  try { var t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') d.setAttribute('data-theme', t); } catch (e) {}
+  try { l = localStorage.getItem('lang'); } catch (e) {}
+  if (l !== 'en' && l !== 'ru') l = (navigator.language || '').toLowerCase().indexOf('ru') === 0 ? 'ru' : 'en';
+  d.lang = l;
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: no-preference)').matches) d.classList.add('motion');
+})();
 </script>
 <style>
-/* Windows side is blue, Linux side is amber: the colours carry the meaning on the whole page. */
+/*
+  Palette: cool slate neutrals for the Windows side, warm orange (the colour of Ubuntu) for what wslbin does.
+  Orange is the main action (copy, install). In code, yellow is a path that wslbin translated.
+  Green = left for bash to expand, grey = an escape that wslbin added, cyan = the PowerShell prompt.
+  Dark is the main theme; light has its own values (not an inversion).
+*/
 :root {
-  --bg: #f4f6f8;
-  --surface: #ffffff;
-  --ink: #131f2a;
-  --muted: #526273;
-  --line: #d9e0e8;
-  --win: #1560bd;
-  --win-soft: #e4eefb;
-  --accent-ink: #ffffff;
-  --term: #0f1720;
-  --term-ink: #dbe5ef;
-  --term-dim: #7d8fa3;
-  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
-  --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0c1218; --surface: #131b24; --ink: #e8eef4; --muted: #9aabbc; --line: #232f3c;
-    --win: #5aa6ff; --win-soft: #14283f; --accent-ink: #06182e; --term: #070c11;
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #0c1218; --surface: #131b24; --ink: #e8eef4; --muted: #9aabbc; --line: #232f3c;
-  --win: #5aa6ff; --win-soft: #14283f; --accent-ink: #06182e; --term: #070c11;
+  --bg: #0b0d12;
+  --surface: #13171f;
+  --surface-2: #191e28;
+  --border: #232935;
+  --border-2: #313949;
+  --text: #edf0f5;
+  --text-2: #a6afbe;
+  --text-3: #8a94a5;
+  --accent: #ff7a45;
+  --accent-hi: #ff9a6e;
+  --on-accent: #2a0d02;
+  --accent-ink: #ff9a6e;
+  --accent-soft: rgba(255, 122, 69, .12);
+  --cyan: #5ccbf5;
+  --ring: #ff7a45;
+
+  --t-bg: #0e1117;
+  --t-bar: #151a23;
+  --t-tab: #0e1117;
+  --t-fg: #dfe5ee;
+  --t-dim: #8a94a5;
+  --t-prompt: #5ccbf5;
+  --t-path: #ffd166;
+  --t-path-bg: rgba(255, 209, 102, .14);
+  --t-glob: #6be3a0;
+  --t-esc: #808a9b;
+
+  --glow-a: rgba(255, 122, 69, .14);
+  --glow-b: rgba(92, 203, 245, .11);
+  --grid: rgba(255, 255, 255, .045);
+  --shadow: 0 30px 80px -32px rgba(0, 0, 0, .7);
+  --term-glow: 0 40px 120px -40px rgba(255, 122, 69, .22);
+  --nav-bg: rgba(11, 13, 18, .72);
+
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, Arial, sans-serif;
+  --display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, Arial, sans-serif;
+  --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   color-scheme: dark;
 }
-
-* { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
-a { color: var(--win); }
-:focus-visible { outline: 3px solid var(--win); outline-offset: 3px; border-radius: 4px; }
-code, pre { font-family: var(--mono); }
-.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
-html[lang="en"] [data-l="ru"], html[lang="ru"] [data-l="en"] { display: none !important; }
-
-/* header */
-header.top { display: flex; align-items: center; gap: 18px; padding: 18px 0; }
-.logo { font: 700 20px var(--mono); color: var(--ink); text-decoration: none; margin-right: auto; }
-.logo b { color: var(--win); }
-a.nav { color: var(--muted); text-decoration: none; font-size: 15px; }
-a.nav:hover { color: var(--ink); }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; padding: 2px; background: var(--surface); }
-.seg button { width: 30px; height: 28px; border: 0; background: none; color: var(--muted); border-radius: 7px; cursor: pointer;
-  display: grid; place-items: center; padding: 0; }
-.seg button svg { width: 16px; height: 16px; }
-.seg button:hover { color: var(--ink); }
-.seg button[aria-pressed="true"] { background: var(--win-soft); color: var(--win); }
-.lang { font: 600 13px var(--sans); background: var(--surface); border: 1px solid var(--line); color: var(--ink);
-  border-radius: 9px; height: 34px; padding: 0 11px; cursor: pointer; }
-.lang:hover { border-color: var(--win); }
-@media (max-width: 600px) { a.nav.hide-s { display: none; } header.top { gap: 10px; } }
-
-/* hero */
-.hero { padding: 52px 0 40px; }
-h1 { font-size: clamp(34px, 5.6vw, 58px); line-height: 1.06; letter-spacing: -0.025em; margin: 0 0 20px; font-weight: 760; max-width: 15em; }
-.lead { font-size: 19px; color: var(--muted); max-width: 36em; margin: 0 0 28px; }
-.cta { display: flex; flex-wrap: wrap; gap: 12px; }
-.btn { display: inline-flex; align-items: center; padding: 12px 22px; border-radius: 10px; font-weight: 600;
-  text-decoration: none; border: 1px solid var(--line); color: var(--ink); background: var(--surface); }
-.btn:hover { border-color: var(--win); }
-.btn.primary { background: var(--win); border-color: var(--win); color: var(--accent-ink); }
-.btn.primary:hover { filter: brightness(1.1); }
-.note { margin: 14px 0 0; font-size: 14px; color: var(--muted); }
-code.i { font-size: .88em; background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; white-space: nowrap; }
-
-/* the translator: what you type, and what bash gets */
-.tr { margin: 8px 0 0; background: var(--term); color: var(--term-ink); border-radius: 14px; overflow: hidden;
-  box-shadow: 0 20px 50px -28px rgba(10, 30, 60, .6); }
-.tr-bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid #ffffff14; font: 13px var(--mono); color: var(--term-dim); }
-.tr-bar i { width: 11px; height: 11px; border-radius: 50%; background: #ffffff26; }
-.tr-bar span { margin-left: 8px; }
-.tr-head, .tr-row { display: grid; grid-template-columns: 1fr 1fr; }
-.tr-head div { padding: 12px 20px 0; font: 600 13px var(--sans); }
-.tr-head .w { color: #7fb7ff; }
-.tr-head .l { color: #ffbd69; }
-.tr-row { font-size: 14px; }
-.tr-row > div { padding: 12px 20px; overflow-x: auto; white-space: pre; }
-.tr-row > div + div, .tr-head div + div { border-left: 1px solid #ffffff14; }
-.tr-row .p { color: #7fb7ff; }
-.tr-row mark { background: #ffb4541f; color: #ffcf8f; border-radius: 4px; padding: 1px 3px; }
-.tr-row .keep { color: var(--term-dim); }
-.tr-foot { padding: 14px 20px; border-top: 1px solid #ffffff14; font-size: 14px; color: var(--term-dim); }
-.tr-foot b { color: var(--term-ink); font-weight: 600; }
-
-/* one entrance on load: the rows appear one after another */
-.tr-row { animation: show .5s ease backwards; animation-delay: calc(var(--i) * .5s + .3s); }
-@keyframes show { from { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .tr-row { animation: none; } html { scroll-behavior: auto; } }
-
-@media (max-width: 720px) {
-  .tr-head { display: none; }
-  .tr-row { grid-template-columns: 1fr; }
-  .tr-row > div + div { border-left: 0; border-top: 1px dashed #ffffff1f; }
-  .tr-row > div:first-child::before { content: "you type"; display: block; font: 600 12px var(--sans); color: #7fb7ff; margin-bottom: 2px; }
-  .tr-row > div + div::before { content: "bash gets"; display: block; font: 600 12px var(--sans); color: #ffbd69; margin-bottom: 2px; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f8f9fb; --surface: #ffffff; --surface-2: #f5f7fa; --border: #e3e7ee; --border-2: #cfd6e1;
+    --text: #0f1520; --text-2: #4b5567; --text-3: #5c687b; --accent-hi: #ff9a6e; --accent-ink: #b83c0a; --accent-soft: rgba(255, 122, 69, .2);
+    --cyan: #0b6f9e; --ring: #b83c0a;
+    --t-bg: #ffffff; --t-bar: #f1f4f8; --t-tab: #ffffff; --t-fg: #1a2230; --t-dim: #5c687b; --t-prompt: #0b6f9e;
+    --t-path: #7a5a00; --t-path-bg: rgba(255, 209, 102, .24); --t-glob: #13803f; --t-esc: #667083;
+    --glow-a: rgba(255, 122, 69, .22); --glow-b: rgba(11, 111, 158, .09); --grid: rgba(15, 21, 32, .055);
+    --shadow: 0 24px 60px -30px rgba(15, 21, 32, .25); --term-glow: 0 40px 100px -40px rgba(255, 122, 69, .3); --nav-bg: rgba(248, 249, 251, .78);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f8f9fb; --surface: #ffffff; --surface-2: #f5f7fa; --border: #e3e7ee; --border-2: #cfd6e1;
+  --text: #0f1520; --text-2: #4b5567; --text-3: #5c687b; --accent-hi: #ff9a6e; --accent-ink: #b83c0a; --accent-soft: rgba(255, 122, 69, .2);
+  --cyan: #0b6f9e; --ring: #b83c0a;
+  --t-bg: #ffffff; --t-bar: #f1f4f8; --t-tab: #ffffff; --t-fg: #1a2230; --t-dim: #5c687b; --t-prompt: #0b6f9e;
+  --t-path: #7a5a00; --t-path-bg: rgba(255, 209, 102, .24); --t-glob: #13803f; --t-esc: #667083;
+  --glow-a: rgba(255, 122, 69, .22); --glow-b: rgba(11, 111, 158, .09); --grid: rgba(15, 21, 32, .055);
+  --shadow: 0 24px 60px -30px rgba(15, 21, 32, .25); --term-glow: 0 40px 100px -40px rgba(255, 122, 69, .3); --nav-bg: rgba(248, 249, 251, .78);
+  color-scheme: light;
 }
 
+/* base */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; scroll-padding-top: 76px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+p a, .fine a { color: var(--accent-ink); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 3px; }
+p a:hover, .fine a:hover { text-decoration-color: currentColor; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; border-radius: 6px; }
+code, pre, kbd { font-family: var(--mono); font-variant-ligatures: none; }
+p code { color: var(--text); font-size: .92em; white-space: nowrap; }
+h1, h2, h3 { text-wrap: balance; }
+svg { flex: none; }
+[hidden] { display: none !important; }
+html[lang="en"] [data-l="ru"], html[lang="ru"] [data-l="en"] { display: none !important; }
+html:not(.js) .js-only { display: none !important; }
+.wrap { width: 100%; max-width: 1180px; margin-inline: auto; padding-inline: 24px; }
+@media (max-width: 640px) { .wrap { padding-inline: 16px; } }
+.vh { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.skip { position: fixed; left: 16px; top: -64px; z-index: 50; padding: 10px 14px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; text-decoration: none; }
+.skip:focus { top: 12px; }
+
+/* navigation */
+.nav { position: sticky; top: 0; z-index: 40; background: var(--nav-bg); border-bottom: 1px solid transparent;
+  -webkit-backdrop-filter: saturate(1.5) blur(14px); backdrop-filter: saturate(1.5) blur(14px); transition: border-color .2s; }
+.nav.scrolled, html:not(.js) .nav { border-bottom-color: var(--border); }
+.nav-in { display: flex; align-items: center; gap: 12px 28px; height: 64px; }
+.logo { display: inline-flex; align-items: center; gap: 10px; margin-right: auto; text-decoration: none; font: 700 18px/1 var(--mono); letter-spacing: -.02em; }
+.logo-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--on-accent);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .08) inset; }
+.logo-mark svg { width: 18px; height: 18px; }
+.links { display: flex; gap: 26px; }
+.links a { color: var(--text-2); text-decoration: none; font-size: 14.5px; transition: color .15s; }
+.links a:hover { color: var(--text); }
+.nav-end { display: flex; align-items: center; gap: 8px; }
+.gh { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px;
+  color: var(--text-2); font-size: 14px; text-decoration: none; transition: color .15s, border-color .15s, background .15s; }
+.gh:hover { color: var(--text); border-color: var(--border-2); background: var(--surface); }
+.gh svg { width: 16px; height: 16px; }
+.seg { display: inline-flex; padding: 1px; border: 1px solid var(--border); border-radius: 10px; }
+.seg button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--text-3); cursor: pointer; transition: color .15s, background .15s; }
+.seg button:hover { color: var(--text); }
+.seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
+.seg svg { width: 15px; height: 15px; }
+.lang { height: 40px; min-width: 42px; padding: 0 10px; border: 1px solid var(--border); border-radius: 10px; background: none; color: var(--text-2); font: 600 12.5px var(--sans); letter-spacing: .02em; cursor: pointer; transition: color .15s, border-color .15s; }
+.lang:hover { color: var(--text); border-color: var(--border-2); }
+@media (max-width: 820px) { .links { display: none; } }
+@media (max-width: 480px) { .gh span { display: none; } .gh { width: 40px; padding: 0; justify-content: center; } .nav-in { gap: 6px; } .seg button { width: 34px; } }
+@media (max-width: 360px) { .nav-end .gh { display: none; } }
+
+/* buttons and the install box */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; height: 48px; padding: 0 20px; border: 1px solid var(--border-2); border-radius: 12px;
+  background: var(--surface); color: var(--text); font: 600 15px var(--sans); text-decoration: none; cursor: pointer; transition: transform .15s, background .15s; }
+.btn:hover { transform: translateY(-1px); background: var(--surface-2); }
+.btn svg { width: 18px; height: 18px; }
+.install { display: flex; align-items: center; min-width: 0; height: 48px; border: 1px solid var(--border-2); border-radius: 12px;
+  background: var(--surface); box-shadow: 0 0 0 4px var(--accent-soft); font: 14.5px/1.4 var(--mono); }
+.install .ps { padding: 0 10px 0 16px; color: var(--cyan); user-select: none; }
+.install code { min-width: 0; padding-right: 12px; color: var(--text); white-space: nowrap; overflow: hidden; }
+.copy { display: inline-flex; align-items: center; justify-content: center; gap: 7px; align-self: stretch; margin: 5px; padding: 0 13px; border: 0; border-radius: 8px; white-space: nowrap;
+  background: var(--accent); color: var(--on-accent); font: 600 13.5px var(--sans); cursor: pointer; transition: background .15s, transform .1s; }
+.copy:hover { background: var(--accent-hi); }
+.copy:active { transform: scale(.97); }
+.copy svg { width: 15px; height: 15px; }
+.copy .ok { display: none; }
+.copy.done .ok { display: block; }
+.copy.done .cp { display: none; }
+.copy:focus-visible { outline-color: var(--text); outline-offset: 2px; }
+
+/* hero */
+.hero { position: relative; isolation: isolate; padding-block: 96px 40px; text-align: center; }
+.hero::before { content: ""; position: absolute; inset: -64px 0 auto; height: 900px; z-index: -1; pointer-events: none;
+  background: radial-gradient(600px 380px at 72% 120px, var(--glow-a), transparent 70%), radial-gradient(560px 360px at 26% 160px, var(--glow-b), transparent 70%); }
+.hero::after { content: ""; position: absolute; inset: -64px 0 auto; height: 760px; z-index: -1; pointer-events: none;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: 56px 56px; background-position: center top;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 20%, #000 30%, transparent 75%); mask-image: radial-gradient(ellipse 70% 60% at 50% 20%, #000 30%, transparent 75%); }
+h1 { margin: 0 auto 18px; padding-bottom: .12em; max-width: 13.5em; font: 700 clamp(40px, 6.6vw, 78px)/1.02 var(--display); letter-spacing: -.042em;
+  color: var(--text); }
+.lead { margin: 0 auto 36px; max-width: 34em; color: var(--text-2); font-size: clamp(17px, 1.55vw, 19.5px); line-height: 1.55; }
+.cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.fine { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 20px; margin: 18px 0 0; color: var(--text-3); font-size: 13.5px; }
+.latest { margin-left: .35em; font-family: var(--mono); font-size: .95em; }
+
+/* terminal windows */
+.term { position: relative; overflow: hidden; border: 1px solid var(--border-2); border-radius: 14px; background: var(--t-bg); color: var(--t-fg); text-align: left; box-shadow: var(--shadow); }
+.bar { display: flex; align-items: flex-end; gap: 8px; height: 40px; padding: 0 0 0 10px; background: var(--t-bar); border-bottom: 1px solid var(--border); font: 12.5px var(--sans); color: var(--t-dim); }
+.tab { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 14px 0 10px; border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0;
+  background: var(--t-tab); color: var(--t-fg); margin-bottom: -1px; }
+.tab .ico { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; background: var(--cyan); color: var(--t-bg); font: 700 9px/1 var(--mono); }
+.tab .ico.lx { background: var(--border-2); color: var(--t-fg); }
+.tab small { color: var(--t-dim); font: 12px var(--mono); }
+.ctl { display: flex; align-self: stretch; margin-left: auto; }
+.ctl span { display: grid; place-items: center; width: 40px; color: var(--t-dim); }
+.ctl svg { width: 10px; height: 10px; }
+.body { margin: 0; padding: 20px 22px 22px; overflow-x: auto; font: 14px/1.75 var(--mono); white-space: pre; tab-size: 4; }
+.pr { color: var(--t-prompt); user-select: none; }
+.cm { color: var(--t-dim); }
+.b { color: var(--t-fg); font-weight: 700; }
+mark.p { padding: 1px 3px; border-radius: 4px; background: var(--t-path-bg); color: var(--t-path); }
+.g { color: var(--t-glob); }
+.e { color: var(--t-esc); }
+
+/* the hero session: real output, typed quickly when motion is welcome */
+.session { max-width: 760px; margin: 64px auto 0; box-shadow: var(--shadow), var(--term-glow); }
+.tl { display: block; min-height: 1.75em; }
+.cur { display: inline-block; width: .6em; height: 1.15em; vertical-align: -.2em; background: var(--t-fg); opacity: .85; }
+.motion .session.play:not(.done) .tl { animation: appear 0s linear var(--d, 0s) both; }
+.session.play .cur { animation: blink 1s steps(1) var(--d, 0s) 4; }
+@media (min-width: 641px) {
+  .motion .session.play:not(.done) .typed { display: inline-block; box-sizing: content-box; overflow: hidden; vertical-align: bottom; border-right: .55em solid transparent;
+    animation: type calc(var(--n, 1) * 18ms) steps(var(--n, 1), end) var(--d, 0s) both, caret calc(var(--n, 1) * 18ms + 150ms) steps(1) var(--d, 0s) both; }
+}
+@keyframes appear { from { visibility: hidden; } to { visibility: visible; } }
+@keyframes type { from { width: 0; } to { width: calc(var(--n, 1) * 1ch); } }
+@keyframes caret { from { border-right-color: var(--t-fg); } to { border-right-color: transparent; } }
+@keyframes blink { 50% { opacity: 0; } }
+
 /* sections */
-section { padding: 72px 0 8px; }
-h2 { font-size: clamp(25px, 3.2vw, 32px); line-height: 1.15; letter-spacing: -0.015em; margin: 0 0 12px; }
-.sub { color: var(--muted); max-width: 38em; margin: 0 0 32px; }
+.sec { padding-block: 128px 0; }
+.head { max-width: 760px; margin: 0 auto 40px; text-align: center; }
+h2 { margin: 0 0 14px; font: 700 clamp(30px, 4.2vw, 50px)/1.08 var(--display); letter-spacing: -.035em; }
+.head p { margin: 0 auto; max-width: 36em; color: var(--text-2); font-size: 18px; }
+@media (max-width: 640px) { .sec { padding-block: 88px 0; } .head { margin-bottom: 32px; } .head p { font-size: 16.5px; } }
 
-/* features: a list, not a grid of cards */
-.feat { margin: 0; border-top: 1px solid var(--line); }
-.feat > div { display: grid; grid-template-columns: 240px 1fr; gap: 8px 32px; padding: 20px 0; border-bottom: 1px solid var(--line); }
-.feat dt { font-weight: 650; }
-.feat dd { margin: 0; color: var(--muted); max-width: 40em; }
-@media (max-width: 680px) { .feat > div { grid-template-columns: 1fr; } }
+/* reveal on scroll (only once the script has set it up) */
+.reveal-on [data-reveal] { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+.reveal-on [data-reveal].in { opacity: 1; transform: none; }
 
-/* install: a real sequence */
-.steps { list-style: none; margin: 0; padding: 0; }
-.steps > li { position: relative; padding: 0 0 28px 48px; }
-.steps > li::before { content: attr(data-n); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 50%;
-  background: var(--win-soft); color: var(--win); font: 700 15px/30px var(--sans); text-align: center; }
-.steps > li::after { content: ""; position: absolute; left: 14px; top: 38px; bottom: 6px; width: 2px; background: var(--line); }
-.steps > li:last-child::after { display: none; }
-.steps h3 { margin: 2px 0 6px; font-size: 18px; }
-.steps p { margin: 0 0 12px; color: var(--muted); max-width: 40em; }
-.code { background: var(--term); color: var(--term-ink); border-radius: 12px; position: relative; }
-.code pre { margin: 0; padding: 16px 84px 16px 18px; font-size: 14px; line-height: 1.7; overflow-x: auto; }
-.code .p { color: #7fb7ff; }
-.copy { position: absolute; top: 10px; right: 10px; font: 600 13px var(--sans); background: #ffffff1a; color: var(--term-ink);
-  border: 0; border-radius: 7px; padding: 5px 11px; cursor: pointer; }
-.copy:hover { background: #ffffff30; }
-.links { display: flex; flex-wrap: wrap; gap: 10px; }
+/* how it works: the same command on both sides */
+.pills { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 0 0 20px; }
+.pill { height: 40px; padding: 0 16px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text-2); font: 500 14px var(--sans); cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
+.pill:hover { color: var(--text); border-color: var(--border-2); }
+.pill[aria-selected="true"] { border-color: var(--text-3); background: var(--surface-2); color: var(--text); }
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) 56px minmax(0, 1fr); align-items: stretch; row-gap: 20px; }
+html:not(.js) .pair + .pair { margin-top: 56px; }
+.pair:focus-visible { outline-offset: 8px; }
+.pair .term .body { padding: 22px; font-size: 14px; white-space: pre-wrap; overflow-wrap: break-word; }
+.arrow { display: grid; place-items: center; justify-self: center; align-self: center; width: 40px; height: 40px; border: 1px solid var(--border-2); border-radius: 50%; background: var(--surface); color: var(--text-2); }
+.arrow svg { width: 18px; height: 18px; }
+.legend { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 22px; margin: 0; padding: 0; list-style: none; color: var(--text-3); font-size: 13.5px; }
+.legend li { display: inline-flex; align-items: center; gap: 9px; }
+.legend code { padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--t-bg); font-size: 12.5px; }
+.map { grid-column: 1 / -1; justify-self: center; display: grid; grid-template-columns: max-content 20px max-content; align-items: center; gap: 6px 12px;
+  margin: 0; padding: 14px 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); font: 13.5px/1.6 var(--mono); }
+.map .to { color: var(--text-3); text-align: center; }
+.map mark.p { background: var(--t-path-bg); }
+.map .g { color: var(--t-glob); }
+.why { grid-column: 1 / -1; margin: 0 auto; max-width: 44em; color: var(--text-2); text-align: center; font-size: 15.5px; }
+.note { margin: 40px auto 0; max-width: 46em; color: var(--text-2); text-align: center; font-size: 15px; }
+@media (max-width: 760px) {
+  .pair { grid-template-columns: minmax(0, 1fr); row-gap: 12px; }
+  .arrow { transform: rotate(90deg); }
+  .map { justify-self: stretch; grid-template-columns: minmax(0, max-content) 16px minmax(0, 1fr); padding: 12px 14px; font-size: 12.5px; }
+  .map > span { min-width: 0; overflow-wrap: break-word; }
+}
 
-footer { margin-top: 56px; border-top: 1px solid var(--line); padding: 26px 0 40px; color: var(--muted); font-size: 14px; }
-footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; }
-footer a { color: var(--muted); }
-footer .r { margin-left: auto; }
+/* works like a Windows program: four cards */
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.card { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 26px; border: 1px solid var(--border); border-radius: 18px;
+  background: var(--surface); transition: border-color .2s; }
+.card:hover { border-color: var(--border-2); }
+.ic { display: grid; place-items: center; width: 36px; height: 36px; margin-bottom: 4px; border: 1px solid var(--border-2); border-radius: 10px; background: var(--surface-2); color: var(--text-2); }
+.ic svg { width: 19px; height: 19px; }
+.card h3 { margin: 0; font: 650 18.5px/1.3 var(--sans); letter-spacing: -.01em; }
+.card p { margin: 0; color: var(--text-2); font-size: 15px; }
+.tok { align-self: flex-start; margin-top: auto; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--t-bg); color: var(--t-fg); font-size: 13.5px; }
+.card .term { margin-top: auto; border-radius: 12px; box-shadow: none; border-color: var(--border); }
+.card .body { padding: 14px 16px; font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: break-word; }
+@media (max-width: 760px) { .cards { grid-template-columns: minmax(0, 1fr); } .card { padding: 22px 20px; } }
+
+/* install */
+.setup-term { max-width: 760px; margin: 0 auto; }
+.setup-term .body { padding: 18px 20px 20px; overflow-x: auto; font-size: 14px; white-space: normal; }
+.ln { min-height: 1.75em; white-space: pre; }
+.ln.cmdline { display: flex; align-items: flex-start; }
+.ln.cmdline code { flex: 1; min-width: 0; }
+.ln .copy { flex: none; width: 40px; height: 40px; margin: -8px 0 -6px 10px; padding: 0; }
+.more { margin: 28px auto 0; max-width: 46em; color: var(--text-2); text-align: center; font-size: 15px; }
+
+/* footer */
+footer { margin-top: 128px; padding-block: 48px 40px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 14px; }
+.foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 28px 40px; }
+.foot .logo { margin: 0 0 12px; color: var(--text); }
+.foot p { margin: 0; max-width: 24em; }
+.foot ul { display: flex; flex-wrap: wrap; gap: 10px 26px; margin: 4px 0 0; padding: 0; list-style: none; }
+.foot ul a { color: var(--text-2); text-decoration: none; transition: color .15s; }
+.foot ul a:hover { color: var(--text); }
+.copyline { margin-top: 36px; padding-top: 22px; border-top: 1px solid var(--border); }
+
+/* phones */
+@media (max-width: 640px) {
+  .hero { padding-block: 56px 24px; }
+  .cta { flex-direction: column; align-items: stretch; }
+  .install { flex-wrap: wrap; height: auto; padding: 12px 0 0; }
+  .install code { flex: 1 1 0; padding: 0 14px 12px 0; white-space: normal; text-align: left; }
+  .install .ps { align-self: flex-start; padding-left: 14px; }
+  .install .copy { flex: 1 0 calc(100% - 10px); height: 40px; margin: 0 5px 5px; }
+  .session { margin-top: 44px; }
+  .body { padding: 16px; font-size: 12.5px; }
+  .bar .tab small, .ctl { display: none; }
+  .session .body { white-space: pre-wrap; overflow-wrap: break-word; }
+  .ln { white-space: pre-wrap; overflow-wrap: break-word; }
+  .ln.cmdline code { white-space: normal; }
+  footer { margin-top: 88px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+/* Where color-mix() is not understood (Chrome and Edge before 111, Firefox before 113, Safari before 16.2) a rule
+   that holds one is dropped as a whole: the headline would be transparent, with nothing behind it. So the plain
+   rules above stand alone, and what needs color-mix() is added here, only where it works. */
+@supports (color: color-mix(in srgb, red, red)) {
+  h1 { background: linear-gradient(180deg, var(--text) 45%, color-mix(in srgb, var(--text) 82%, var(--bg))); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .logo-mark { box-shadow: 0 0 0 1px rgba(255, 255, 255, .08) inset, 0 6px 18px -6px color-mix(in srgb, var(--accent) 60%, transparent); }
+  .install { border-color: color-mix(in srgb, var(--accent) 45%, var(--border-2)); box-shadow: 0 0 0 4px var(--accent-soft), 0 12px 32px -14px color-mix(in srgb, var(--accent) 45%, transparent); }
+  .card { background: linear-gradient(180deg, var(--surface), color-mix(in srgb, var(--surface) 70%, var(--bg))); }
+}
+@media (forced-colors: active) { h1 { background: none; color: CanvasText; } }
+
+/* On paper: everything is shown (nothing waits for the scroll), in dark ink on white, without the page furniture */
+@media print {
+  :root, :root[data-theme="dark"], :root[data-theme="light"] {
+    --bg: #fff; --bg-2: #fff; --surface: #fff; --surface-2: #f5f7fa; --border: #cfd6e1; --border-2: #aab3c2;
+    --text: #0f1520; --text-2: #374151; --text-3: #4b5563; --accent-ink: #b83c0a; --nav-bg: #fff;
+    --t-bg: #fff; --t-bar: #f1f4f8; --t-tab: #fff; --t-fg: #1a2230; --t-dim: #4b5563; --t-prompt: #0b6f9e; --t-path: #7a5a00; --t-glob: #13803f; --t-esc: #4b5563;
+    --grid: transparent; --glow-a: transparent; --glow-b: transparent; --shadow: none; --term-glow: none;
+  }
+  .reveal-on [data-reveal] { opacity: 1; transform: none; }
+  .skip, .nav, .js-only { display: none !important; }
+  h1 { background: none; color: var(--text); }
+}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header class="top">
-    <a class="logo" href="#"><b>&gt;</b>wslbin</a>
-    <a class="nav hide-s" href="#features"><span data-l="en">Features</span><span data-l="ru">Возможности</span></a>
-    <a class="nav hide-s" href="#install"><span data-l="en">Install</span><span data-l="ru">Установка</span></a>
-    <a class="nav" href="https://github.com/quatrebi/wslbin">GitHub</a>
-    <div class="seg" role="group" aria-label="Theme" id="theme">
-      <button type="button" data-t="auto" title="Auto" aria-label="Auto theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg></button>
-      <button type="button" data-t="light" title="Light" aria-label="Light theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></svg></button>
-      <button type="button" data-t="dark" title="Dark" aria-label="Dark theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z"/></svg></button>
-    </div>
-    <button class="lang" id="lang" type="button" aria-label="Language">RU</button>
-  </header>
+<a class="skip" href="#main"><span data-l="en">Skip to content</span><span data-l="ru">К содержанию</span></a>
 
-  <main>
-    <div class="hero">
-      <h1>
+<header class="nav" id="nav">
+  <div class="wrap nav-in">
+    <a class="logo" href="./">
+      <span class="logo-mark" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6l4.5 4L5 14M11 14.5h4.5"/></svg></span>
+      wslbin
+    </a>
+    <nav class="links" aria-label="Main" data-label-en="Main" data-label-ru="Основная навигация">
+      <a href="#how"><span data-l="en">How it works</span><span data-l="ru">Как это работает</span></a>
+      <a href="#features"><span data-l="en">Features</span><span data-l="ru">Возможности</span></a>
+      <a href="#install"><span data-l="en">Install</span><span data-l="ru">Установка</span></a>
+    </nav>
+    <div class="nav-end">
+      <a class="gh" href="https://github.com/quatrebi/wslbin" aria-label="wslbin on GitHub" data-label-en="wslbin on GitHub" data-label-ru="wslbin на GitHub">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span>GitHub</span>
+      </a>
+      <div class="seg js-only" role="group" id="theme" aria-label="Theme" data-label-en="Theme" data-label-ru="Тема">
+        <button type="button" data-t="auto" aria-label="Theme of the system" data-label-en="Theme of the system" data-label-ru="Тема как в системе"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg></button>
+        <button type="button" data-t="light" aria-label="Light theme" data-label-en="Light theme" data-label-ru="Светлая тема"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></svg></button>
+        <button type="button" data-t="dark" aria-label="Dark theme" data-label-en="Dark theme" data-label-ru="Тёмная тема"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z"/></svg></button>
+      </div>
+      <button class="lang js-only" id="lang" type="button" lang="ru" aria-label="Русский">RU</button>
+    </div>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+  <section class="hero" aria-labelledby="title">
+    <div class="wrap">
+      <h1 id="title">
         <span data-l="en">Linux tools from WSL, as plain Windows programs.</span>
         <span data-l="ru">Linux-утилиты из WSL как обычные программы Windows.</span>
       </h1>
       <p class="lead">
-        <span data-l="en">Type <code class="i">rsync</code>, <code class="i">make</code> or <code class="i">dig</code> in PowerShell, cmd or an IDE terminal, or start them from any program. Windows paths, wildcards, pipes, colours, Ctrl+C and exit codes work as you expect.</span>
-        <span data-l="ru">Запускайте <code class="i">rsync</code>, <code class="i">make</code> и <code class="i">dig</code> в PowerShell, cmd или терминале IDE, либо из любой программы. Пути Windows, шаблоны, пайпы, цвета, Ctrl+C и коды возврата работают как надо.</span>
+        <span data-l="en">Type <code>rsync</code>, <code>make</code> or <code>dig</code> in PowerShell, cmd or your IDE: paths, wildcards, pipes and exit codes just work.</span>
+        <span data-l="ru">Набирайте <code>rsync</code>, <code>make</code> или <code>dig</code> в PowerShell, cmd или IDE: пути, шаблоны, пайпы и коды возврата просто работают.</span>
       </p>
       <div class="cta">
-        <a class="btn primary" href="https://github.com/quatrebi/wslbin/releases/latest"><span data-l="en">Download</span><span data-l="ru">Скачать</span></a>
-        <a class="btn" href="https://github.com/quatrebi/wslbin"><span data-l="en">View on GitHub</span><span data-l="ru">Репозиторий на GitHub</span></a>
+        <div class="install">
+          <span class="ps" aria-hidden="true">PS&gt;</span>
+          <code id="cmd-hero">irm https://<wbr>quatrebi.github.io/<wbr>wslbin/<wbr>install.ps1 | iex</code>
+          <button class="copy js-only" type="button" data-copy="cmd-hero">
+            <svg class="cp" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6"/><path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg>
+            <svg class="ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>
+            <span class="label"><span data-l="en">Copy</span><span data-l="ru">Копировать</span></span>
+          </button>
+        </div>
+        <a class="btn" href="https://github.com/quatrebi/wslbin">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span data-l="en">View on GitHub</span><span data-l="ru">Репозиторий на GitHub</span>
+        </a>
       </div>
-      <p class="note">
-        <span data-l="en">Windows 10 22H2 or 11, WSL 2 with a distribution. MIT licence, no dependencies.</span>
-        <span data-l="ru">Windows 10 22H2 или 11, WSL 2 с дистрибутивом. Лицензия MIT, без зависимостей.</span>
+      <p class="fine">
+        <span><span data-l="en">Windows 10 22H2+ or 11, WSL 2</span><span data-l="ru">Windows 10 22H2+ или 11, WSL 2</span></span>
+        <a href="install.ps1"><span data-l="en">Read the script</span><span data-l="ru">Прочитать скрипт</span></a>
+        <a href="https://github.com/quatrebi/wslbin/releases/latest"><span data-l="en">Releases</span><span data-l="ru">Релизы</span><span class="latest" hidden></span></a>
       </p>
+
+      <figure class="term session" id="session" aria-label="PowerShell: wc and grep are wslbin wrappers and run in WSL" data-label-en="PowerShell: wc and grep are wslbin wrappers and run in WSL" data-label-ru="PowerShell: wc и grep — обёртки wslbin, они выполняются в WSL">
+        <div class="bar" aria-hidden="true">
+          <span class="tab"><span class="ico">&gt;_</span>PowerShell</span>
+          <span class="ctl"><span><svg viewBox="0 0 10 10" stroke="currentColor"><path d="M0 5h10"/></svg></span><span><svg viewBox="0 0 10 10" fill="none" stroke="currentColor"><rect x=".5" y=".5" width="9" height="9"/></svg></span><span><svg viewBox="0 0 10 10" stroke="currentColor"><path d="M0 0l10 10M10 0L0 10"/></svg></span></span>
+        </div>
+<pre class="body"><span class="tl"><span class="pr">PS&gt; </span><span class="typed"><span class="b">wc</span> -l *.log</span></span><span class="tl out">  4 app.log</span><span class="tl out">  2 db.log</span><span class="tl out">  6 total</span><span class="tl"><span class="pr">PS&gt; </span><span class="typed"><span class="b">grep</span> -n ERROR .\app.log</span></span><span class="tl out">2:09:14 ERROR disk full</span><span class="tl out">4:09:20 ERROR timeout</span><span class="tl"><span class="pr">PS&gt; </span><span class="typed"><span class="b">grep</span> -q FATAL app.log; $LASTEXITCODE</span></span><span class="tl out">1</span><span class="tl"><span class="pr">PS&gt; </span><span class="cur" aria-hidden="true"></span></span></pre>
+      </figure>
     </div>
+  </section>
 
-    <div class="tr" role="group" aria-label="Examples of what you type in PowerShell and the Linux command that bash gets">
-      <div class="tr-bar"><i></i><i></i><i></i><span>PowerShell &rarr; WSL</span></div>
-      <div class="tr-head">
-        <div class="w"><span data-l="en">You type in Windows</span><span data-l="ru">Вы вводите в Windows</span></div>
-        <div class="l"><span data-l="en">Bash gets in WSL</span><span data-l="ru">Bash получает в WSL</span></div>
+  <section class="sec" id="how" aria-labelledby="how-title">
+    <div class="wrap">
+      <div class="head" data-reveal>
+        <h2 id="how-title"><span data-l="en">What you type, and what bash gets</span><span data-l="ru">Что вы набираете и что получает bash</span></h2>
+        <p><span data-l="en">Windows paths become Linux paths, wildcards are left for bash, everything else reaches the utility as text.</span><span data-l="ru">Пути Windows становятся путями Linux, шаблоны остаются для bash, остальное доходит до утилиты как текст.</span></p>
       </div>
-      <div class="tr-row" style="--i:0">
-        <div><span class="p">PS&gt;</span> rsync -av *.log C:\backup\</div>
-        <div>rsync -av *.log <mark>/mnt/c/backup/</mark></div>
+      <div data-reveal>
+        <div class="pills js-only" role="tablist" aria-label="Examples" data-label-en="Examples" data-label-ru="Примеры">
+          <button class="pill" type="button" role="tab" id="tab-path" aria-controls="ex-path" aria-selected="true"><span data-l="en">Path</span><span data-l="ru">Путь</span></button>
+          <button class="pill" type="button" role="tab" id="tab-glob" aria-controls="ex-glob" aria-selected="false" tabindex="-1"><span data-l="en">Wildcard</span><span data-l="ru">Шаблон</span></button>
+          <button class="pill" type="button" role="tab" id="tab-text" aria-controls="ex-text" aria-selected="false" tabindex="-1"><span data-l="en">Literal text</span><span data-l="ru">Текст как есть</span></button>
+        </div>
+
+        <div class="pair" id="ex-path">
+          <ul class="legend">
+            <li><code><mark class="p">/mnt/c</mark></code><span data-l="en">path translated by wslbin</span><span data-l="ru">путь, переведённый wslbin</span></li>
+          </ul>
+          <div class="term"><div class="bar" aria-hidden="true"><span class="tab"><span class="ico">&gt;_</span>PowerShell <small>C:\proj</small></span></div>
+            <pre class="body"><span class="pr">PS&gt; </span><span class="b">rsync</span> -av <mark class="p">C:\proj\dist\</mark> host:/srv/app/</pre></div>
+          <span class="arrow" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h12M11 5l5 5-5 5"/></svg></span>
+          <div class="term"><div class="bar" aria-hidden="true"><span class="tab"><span class="ico lx">$</span>bash <small>/mnt/c/proj</small></span></div>
+            <pre class="body"><span class="b">rsync</span> -av <mark class="p">/mnt/c/proj/dist/</mark> host:/srv/app/</pre></div>
+          <p class="map"><span>C:\proj\dist\</span><span class="to" aria-hidden="true">&rarr;</span><span><mark class="p">/mnt/c/proj/dist/</mark></span><span>-IC:\inc</span><span class="to" aria-hidden="true">&rarr;</span><span>-I<mark class="p">/mnt/c/inc</mark></span><span>OUT=C:\out</span><span class="to" aria-hidden="true">&rarr;</span><span>OUT=<mark class="p">/mnt/c/out</mark></span><span>C:\proj\*.log</span><span class="to" aria-hidden="true">&rarr;</span><span><mark class="p">/mnt/c/proj/</mark><span class="g">*.log</span></span></p>
+          <p class="why"><span data-l="en">Only Windows paths change, trailing slash included. <code>host:/srv/app/</code> stays as typed.</span><span data-l="ru">Меняются только пути Windows, вместе с косой чертой в конце. <code>host:/srv/app/</code> остаётся как набрано.</span></p>
+        </div>
+
+        <div class="pair" id="ex-glob">
+          <ul class="legend">
+            <li><code><mark class="p">/mnt/c</mark></code><span data-l="en">path translated by wslbin</span><span data-l="ru">путь, переведённый wslbin</span></li>
+            <li><code class="g">*.log</code><span data-l="en">expanded by bash</span><span data-l="ru">раскроет bash</span></li>
+          </ul>
+          <div class="term"><div class="bar" aria-hidden="true"><span class="tab"><span class="ico">&gt;_</span>PowerShell <small>C:\proj</small></span></div>
+            <pre class="body"><span class="pr">PS&gt; </span><span class="b">rsync</span> -av *.log <mark class="p">C:\backup\</mark></pre></div>
+          <span class="arrow" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h12M11 5l5 5-5 5"/></svg></span>
+          <div class="term"><div class="bar" aria-hidden="true"><span class="tab"><span class="ico lx">$</span>bash <small>/mnt/c/proj</small></span></div>
+            <pre class="body"><span class="b">rsync</span> -av <span class="g">*.log</span> <mark class="p">/mnt/c/backup/</mark></pre></div>
+          <p class="why"><span data-l="en">Bash expands <code>*.log</code> by Linux rules in the current folder. Same for <code>?</code>, <code>[...]</code> and a leading <code>~</code>.</span><span data-l="ru">Bash раскрывает <code>*.log</code> по правилам Linux в текущей папке. Так же <code>?</code>, <code>[...]</code> и начальная <code>~</code>.</span></p>
+        </div>
+
+        <div class="pair" id="ex-text">
+          <ul class="legend">
+            <li><code class="e">\</code><span data-l="en">escape added by wslbin</span><span data-l="ru">экранирование от wslbin</span></li>
+          </ul>
+          <div class="term"><div class="bar" aria-hidden="true"><span class="tab"><span class="ico">&gt;_</span>PowerShell <small>C:\proj</small></span></div>
+            <pre class="body"><span class="pr">PS&gt; </span><span class="b">awk</span> '{print $1, $2}' data.txt</pre></div>
+          <span class="arrow" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h12M11 5l5 5-5 5"/></svg></span>
+          <div class="term"><div class="bar" aria-hidden="true"><span class="tab"><span class="ico lx">$</span>bash <small>/mnt/c/proj</small></span></div>
+            <pre class="body"><span class="b">awk</span> <span class="e">\</span>{print<span class="e">\</span> <span class="e">\</span>$1,<span class="e">\</span> <span class="e">\</span>$2<span class="e">\</span>} data.txt</pre></div>
+          <p class="why"><span data-l="en">Braces, <code>$</code>, <code>;</code>, <code>|</code>, quotes and spaces arrive as text: nothing typed can run a second command.</span><span data-l="ru">Скобки, <code>$</code>, <code>;</code>, <code>|</code>, кавычки и пробелы доходят как текст: набранное не запустит вторую команду.</span></p>
+        </div>
       </div>
-      <div class="tr-row" style="--i:1">
-        <div><span class="p">PS&gt;</span> rsync -av C:\proj\dist\ host:/srv/app/</div>
-        <div>rsync -av <mark>/mnt/c/proj/dist/</mark> host:/srv/app/</div>
+      <p class="note" data-reveal><span data-l="en">Need <code>$VAR</code>, <code>$(...)</code> or a pipe inside Linux: <code>--wslbin-sh</code> or <code>wslbin -c "..."</code>. To check without running: <code>--wslbin-explain</code>. Details in the <a href="https://github.com/quatrebi/wslbin#usage">README</a>.</span><span data-l="ru">Нужны <code>$VAR</code>, <code>$(...)</code> или пайп внутри Linux: <code>--wslbin-sh</code> или <code>wslbin -c "..."</code>. Проверить без запуска: <code>--wslbin-explain</code>. Подробнее в <a href="https://github.com/quatrebi/wslbin#usage">README</a>.</span></p>
+    </div>
+  </section>
+
+  <section class="sec" id="features" aria-labelledby="features-title">
+    <div class="wrap">
+      <div class="head" data-reveal>
+        <h2 id="features-title"><span data-l="en">Works like a Windows program</span><span data-l="ru">Ведёт себя как программа Windows</span></h2>
       </div>
-      <div class="tr-row" style="--i:2">
-        <div><span class="p">PS&gt;</span> make build; $LASTEXITCODE</div>
-        <div><span class="keep">exit code of make, unchanged</span></div>
-      </div>
-      <div class="tr-foot">
-        <span data-l="en"><b>*</b> is left for bash to expand by Linux rules. Everything else you type, such as <b>$ ; | &amp;</b>, quotes and spaces, reaches the utility literally.</span>
-        <span data-l="ru"><b>*</b> остаётся для bash, он раскроет её по правилам Linux. Всё остальное, например <b>$ ; | &amp;</b>, кавычки и пробелы, доходит до утилиты как есть.</span>
+      <div class="cards">
+        <article class="card" data-reveal>
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="15" height="10" rx="2"/><path d="M6 12h8M5.6 8.5h.01M8.6 8.5h.01M11.6 8.5h.01M14.4 8.5h.01"/></svg></span>
+          <h3><span data-l="en">Tab completion</span><span data-l="ru">Автодополнение</span></h3>
+          <p><span data-l="en">Variants come from bash-completion in WSL, in PowerShell and in cmd with Clink.</span><span data-l="ru">Варианты берутся из bash-completion в WSL, в PowerShell и в cmd через Clink.</span></p>
+          <div class="term"><pre class="body"><span class="pr">PS&gt; </span><span class="b">make</span> <span class="cm">&lt;Tab&gt;</span>
+    <span class="cm"><span data-l="en">targets of the Makefile</span><span data-l="ru">цели Makefile</span></span>
+<span class="pr">PS&gt; </span><span class="b">rsync</span> C:\Prog<span class="cm">&lt;Tab&gt;</span>
+    C:\Program Files\</pre></div>
+        </article>
+        <article class="card" data-reveal>
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M6 8l2.5 2L6 12M10.5 12.5h3.5"/></svg></span>
+          <h3><span data-l="en">Pipes, Ctrl+C, exit codes</span><span data-l="ru">Пайпы, Ctrl+C, коды выхода</span></h3>
+          <p><span data-l="en">Input and output are not intercepted, so pipes, colours and full-screen programs work. The exit code is the utility's own.</span><span data-l="ru">Ввод и вывод не перехватываются: пайпы, цвета и полноэкранные программы работают. Код выхода — код самой утилиты.</span></p>
+          <code class="tok">make build; $LASTEXITCODE</code>
+        </article>
+        <article class="card" data-reveal>
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 6h8.5M8 10h8.5M8 14h8.5"/><path d="M3.5 6l1 1 1.8-2M3.5 10l1 1 1.8-2M3.5 14l1 1 1.8-2" stroke-linejoin="round"/></svg></span>
+          <h3><span data-l="en">Wrappers on demand</span><span data-l="ru">Обёртки по запросу</span></h3>
+          <p><span data-l="en">Creates wrappers and offers to install a missing utility with apt. <code>--list</code> shows them, <code>--doctor</code> checks the setup.</span><span data-l="ru">Создаёт обёртки и предлагает поставить недостающую утилиту через apt. <code>--list</code> покажет их, <code>--doctor</code> проверит настройку.</span></p>
+          <code class="tok">wslbin --link make rsync</code>
+        </article>
+        <article class="card" data-reveal>
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 2.5l1.7 4.6 4.8 1.7-4.8 1.7L10 15.1l-1.7-4.6-4.8-1.7 4.8-1.7z"/><path d="M15.5 13.5l.6 1.5 1.4.5-1.4.5-.6 1.5-.6-1.5-1.4-.5 1.4-.5z"/></svg></span>
+          <h3><span data-l="en">Made for AI agents</span><span data-l="ru">Для ИИ-агентов</span></h3>
+          <p><span data-l="en">Teaches Claude Code and Codex to use your Linux tools. <code>--remove</code> undoes it.</span><span data-l="ru">Учит Claude Code и Codex пользоваться вашими Linux-утилитами. <code>--remove</code> всё отменяет.</span></p>
+          <code class="tok">wslbin --install-ai-context</code>
+        </article>
       </div>
     </div>
+  </section>
 
-    <section id="features">
-      <h2><span data-l="en">One small .exe per utility</span><span data-l="ru">Один маленький .exe на каждую утилиту</span></h2>
-      <p class="sub">
-        <span data-l="en">Each wrapped utility is a copy of <code class="i">wslbin.exe</code> named after it. Input and output are not intercepted, so pipes and full-screen programs work.</span>
-        <span data-l="ru">Каждая утилита это копия <code class="i">wslbin.exe</code> с её именем. Ввод и вывод не перехватываются, поэтому пайпы и полноэкранные программы работают.</span>
-      </p>
-      <dl class="feat">
-        <div>
-          <dt><span data-l="en">Safe by default</span><span data-l="ru">Безопасно по умолчанию</span></dt>
-          <dd><span data-l="en">Only <code class="i">*</code>, <code class="i">?</code>, <code class="i">[...]</code> and a leading <code class="i">~</code> reach bash unescaped. An argument can never run a second command.</span><span data-l="ru">В bash без экранирования попадают только <code class="i">*</code>, <code class="i">?</code>, <code class="i">[...]</code> и начальная <code class="i">~</code>. Аргумент не может запустить вторую команду.</span></dd>
+  <section class="sec" id="install" aria-labelledby="install-title">
+    <div class="wrap">
+      <div class="head" data-reveal>
+        <h2 id="install-title"><span data-l="en">Install</span><span data-l="ru">Установка</span></h2>
+        <p><span data-l="en">Downloads the latest release, checks SHA256, asks two questions.</span><span data-l="ru">Скачивает последний релиз, сверяет SHA256, задаёт два вопроса.</span></p>
+      </div>
+      <figure class="term setup-term" data-reveal aria-label="Install in PowerShell" data-label-en="Install in PowerShell" data-label-ru="Установка в PowerShell">
+        <div class="bar" aria-hidden="true"><span class="tab"><span class="ico">&gt;_</span>PowerShell</span></div>
+        <div class="body">
+          <div class="ln cm"><span data-l="en"># 1  install</span><span data-l="ru"># 1  установка</span></div>
+          <div class="ln cmdline"><span class="pr">PS&gt; </span><code id="cmd-step">irm https://<wbr>quatrebi.github.io/<wbr>wslbin/<wbr>install.ps1 | iex</code><button class="copy js-only" type="button" data-copy="cmd-step" title="Copy" data-label-en="Copy the install command" data-label-ru="Копировать команду установки" aria-label="Copy the install command"><svg class="cp" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6"/><path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg><svg class="ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></button></div>
+          <div class="ln">&nbsp;</div>
+          <div class="ln cm"><span data-l="en"># 2  check it, add wrappers</span><span data-l="ru"># 2  проверка, обёртки</span></div>
+          <div class="ln"><span class="pr">PS&gt; </span><span class="b">wslbin</span> --doctor</div>
+          <div class="ln"><span class="pr">PS&gt; </span><span class="b">wslbin</span> --link make rsync dig</div>
+          <div class="ln">&nbsp;</div>
+          <div class="ln cm"><span data-l="en"># 3  Tab completion, if you did not hook it in at step 1</span><span data-l="ru"># 3  автодополнение, если не подключили на шаге 1</span></div>
+          <div class="ln"><span class="b">wslbin</span> --init pwsh | Invoke-Expression</div>
         </div>
-        <div>
-          <dt><span data-l="en">Three modes</span><span data-l="ru">Три режима</span></dt>
-          <dd><span data-l="en">Smart by default, <code class="i">--wslbin-raw</code> for exact arguments, <code class="i">--wslbin-sh</code> for Linux variables and <code class="i">$(...)</code>.</span><span data-l="ru">По умолчанию умный, <code class="i">--wslbin-raw</code> для точных аргументов, <code class="i">--wslbin-sh</code> для переменных Linux и <code class="i">$(...)</code>.</span></dd>
-        </div>
-        <div>
-          <dt><span data-l="en">See before you run</span><span data-l="ru">Посмотрите до запуска</span></dt>
-          <dd><span data-l="en"><code class="i">--wslbin-explain</code> prints the exact bash command and runs nothing.</span><span data-l="ru"><code class="i">--wslbin-explain</code> печатает точную команду bash и ничего не запускает.</span></dd>
-        </div>
-        <div>
-          <dt><span data-l="en">Tab completion</span><span data-l="ru">Автодополнение по Tab</span></dt>
-          <dd><span data-l="en">Variants come from bash-completion in WSL, in PowerShell and in cmd with Clink. <code class="i">C:\Prog</code> completes to <code class="i">C:\Program Files\</code>.</span><span data-l="ru">Варианты берутся из bash-completion в WSL, в PowerShell и в cmd через Clink. <code class="i">C:\Prog</code> дополняется до <code class="i">C:\Program Files\</code>.</span></dd>
-        </div>
-        <div>
-          <dt><span data-l="en">Check and manage</span><span data-l="ru">Проверка и управление</span></dt>
-          <dd><span data-l="en"><code class="i">wslbin --doctor</code> checks the setup. <code class="i">--link</code> adds wrappers and offers to install missing utilities with apt.</span><span data-l="ru"><code class="i">wslbin --doctor</code> проверяет настройку. <code class="i">--link</code> добавляет обёртки и предлагает поставить недостающие утилиты через apt.</span></dd>
-        </div>
-        <div>
-          <dt><span data-l="en">Made for AI agents too</span><span data-l="ru">И для ИИ-агентов</span></dt>
-          <dd><span data-l="en"><code class="i">wslbin --install-ai-context</code> tells Claude Code and Codex how to call Linux tools on your machine.</span><span data-l="ru"><code class="i">wslbin --install-ai-context</code> объясняет Claude Code и Codex, как вызывать Linux-утилиты на вашей машине.</span></dd>
-        </div>
-      </dl>
-    </section>
-
-    <section id="install">
-      <h2><span data-l="en">Install</span><span data-l="ru">Установка</span></h2>
-      <p class="sub">
-        <span data-l="en">One command downloads the latest release, checks its SHA256 and runs the installer from it. Nothing to build, no .NET needed.</span>
-        <span data-l="ru">Одна команда скачивает последний релиз, сверяет его SHA256 и запускает установщик из него. Собирать ничего не нужно, .NET не нужен.</span>
-      </p>
-      <ol class="steps">
-        <li data-n="1">
-          <h3><span data-l="en">Run the installer</span><span data-l="ru">Запустите установщик</span></h3>
-          <p><span data-l="en">In a console it asks for whom to install and whether to hook Tab completion in.</span><span data-l="ru">В консоли он спросит, для кого ставить и подключать ли автодополнение.</span></p>
-          <div class="code">
-            <button class="copy" type="button" id="copy"><span data-l="en">Copy</span><span data-l="ru">Копировать</span></button>
-<pre id="cmd">irm https://quatrebi.github.io/wslbin/install.ps1 | iex</pre>
-          </div>
-          <p style="margin-top:12px"><span data-l="en">With parameters (a version, the scope, utilities to link, completion):</span><span data-l="ru">С параметрами (версия, область, утилиты для обёрток, автодополнение):</span></p>
-          <div class="code"><pre>&amp; ([scriptblock]::Create((irm https://quatrebi.github.io/wslbin/install.ps1))) `
-  -Version 0.1.7 -Scope AllUsers -Link make,rsync,dig -Completion pwsh,clink -Quiet</pre></div>
-        </li>
-        <li data-n="2">
-          <h3><span data-l="en">Check it</span><span data-l="ru">Проверьте</span></h3>
-          <div class="code"><pre><span class="p">PS&gt;</span> wslbin --doctor</pre></div>
-        </li>
-        <li data-n="3">
-          <h3><span data-l="en">Update or remove</span><span data-l="ru">Обновление и удаление</span></h3>
-          <p><span data-l="en">Update: run the same command again. Remove: Settings &rarr; Apps &rarr; wslbin &rarr; Uninstall.</span><span data-l="ru">Обновление: та же команда ещё раз. Удаление: «Параметры» &rarr; «Приложения» &rarr; wslbin &rarr; «Удалить».</span></p>
-          <div class="links">
-            <a class="btn" href="https://github.com/quatrebi/wslbin/releases/latest"><span data-l="en">Releases (zip, SHA256)</span><span data-l="ru">Релизы (zip, SHA256)</span></a>
-          </div>
-          <p style="margin-top:12px"><span data-l="en">More in the <a href="https://github.com/quatrebi/wslbin#readme">README</a>: scopes, offline install from the zip, configuration, build from source.</span><span data-l="ru">Подробнее в <a href="https://github.com/quatrebi/wslbin#readme">README</a>: области установки, установка из архива без сети, настройка, сборка из исходников.</span></p>
-        </li>
-      </ol>
-    </section>
-  </main>
-</div>
+      </figure>
+      <p class="more" data-reveal><span data-l="en">All users, a specific version, offline, update, remove: <a href="https://github.com/quatrebi/wslbin#install">README</a>.</span><span data-l="ru">Для всех пользователей, конкретная версия, без сети, обновление, удаление: <a href="https://github.com/quatrebi/wslbin#install">README</a>.</span></p>
+    </div>
+  </section>
+</main>
 
 <footer>
   <div class="wrap">
-    <span>MIT &copy; 2026 Dmitriy Khudnitskiy</span>
-    <a href="https://github.com/quatrebi/wslbin">GitHub</a>
-    <a href="https://github.com/quatrebi/wslbin/issues">Issues</a>
-    <a class="r" href="https://github.com/quatrebi/wslbin/blob/main/LICENSE">LICENSE</a>
+    <div class="foot">
+      <div>
+        <a class="logo" href="./"><span class="logo-mark" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6l4.5 4L5 14M11 14.5h4.5"/></svg></span>wslbin</a>
+        <p><span data-l="en">Linux utilities from WSL as ordinary Windows programs.</span><span data-l="ru">Linux-утилиты из WSL как обычные программы Windows.</span></p>
+      </div>
+      <nav aria-label="Project" data-label-en="Project" data-label-ru="Проект">
+        <ul>
+          <li><a href="https://github.com/quatrebi/wslbin">GitHub</a></li>
+          <li><a href="https://github.com/quatrebi/wslbin#readme">README</a></li>
+          <li><a href="https://github.com/quatrebi/wslbin/releases"><span data-l="en">Releases</span><span data-l="ru">Релизы</span></a></li>
+          <li><a href="https://github.com/quatrebi/wslbin/issues">Issues</a></li>
+          <li><a href="https://github.com/quatrebi/wslbin/blob/main/llms.txt">llms.txt</a></li>
+          <li><a href="https://github.com/quatrebi/wslbin/blob/main/LICENSE"><span data-l="en">License</span><span data-l="ru">Лицензия</span></a></li>
+        </ul>
+      </nav>
+    </div>
+    <p class="copyline">MIT &copy; 2026 Dmitriy Khudnitskiy</p>
   </div>
 </footer>
+
+<p class="vh" id="status" role="status" aria-live="polite"></p>
 
 <script>
 (function () {
   var root = document.documentElement;
-  function store(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
-  function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function save(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
+  function all(sel, from) { return Array.prototype.slice.call((from || document).querySelectorAll(sel)); }
+  function say(en, ru) { return root.lang === 'ru' ? ru : en; }
 
   /* theme: auto (follow the system), light, dark */
-  var tbtns = document.querySelectorAll('#theme button');
-  function setTheme(t) {
-    if (t === 'light' || t === 'dark') { root.setAttribute('data-theme', t); store('theme', t); }
-    else { root.removeAttribute('data-theme'); store('theme', null); t = 'auto'; }
-    for (var i = 0; i < tbtns.length; i++) tbtns[i].setAttribute('aria-pressed', tbtns[i].getAttribute('data-t') === t);
+  var themeButtons = all('#theme button');
+  function setTheme(t, remember) {
+    if (t === 'light' || t === 'dark') root.setAttribute('data-theme', t);
+    else { root.removeAttribute('data-theme'); t = 'auto'; }
+    if (remember) save('theme', t === 'auto' ? null : t);
+    themeButtons.forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-t') === t)); });
   }
-  for (var i = 0; i < tbtns.length; i++) tbtns[i].addEventListener('click', function () { setTheme(this.getAttribute('data-t')); });
-  setTheme(load('theme'));
+  themeButtons.forEach(function (b) { b.addEventListener('click', function () { setTheme(b.getAttribute('data-t'), true); }); });
+  setTheme(root.getAttribute('data-theme'), false);
 
-  /* language */
-  var btn = document.getElementById('lang');
-  function setLang(l) { root.lang = l; btn.textContent = l === 'en' ? 'RU' : 'EN'; store('lang', l); }
-  var saved = load('lang');
-  setLang(saved || ((navigator.language || '').toLowerCase().indexOf('ru') === 0 ? 'ru' : 'en'));
-  btn.addEventListener('click', function () { setLang(root.lang === 'en' ? 'ru' : 'en'); });
-
-  /* copy the install command */
-  var copy = document.getElementById('copy');
-  copy.addEventListener('click', function () {
-    if (navigator.clipboard) navigator.clipboard.writeText(document.getElementById('cmd').textContent).catch(function () {});
-    var old = copy.innerHTML;
-    copy.textContent = root.lang === 'ru' ? 'Готово' : 'Copied';
-    setTimeout(function () { copy.innerHTML = old; }, 1500);
+  /* language: chosen in the head; the button switches and remembers */
+  var langButton = document.getElementById('lang');
+  var session = document.getElementById('session');
+  function applyLang() {
+    var ru = root.lang === 'ru';
+    langButton.textContent = ru ? 'EN' : 'RU';
+    langButton.setAttribute('lang', ru ? 'en' : 'ru');
+    langButton.setAttribute('aria-label', ru ? 'English' : 'Русский');
+    document.title = ru ? 'wslbin: Linux-утилиты как программы Windows' : 'wslbin: Linux utilities as Windows programs';
+    all('[data-label-en]').forEach(function (el) { el.setAttribute('aria-label', el.getAttribute(ru ? 'data-label-ru' : 'data-label-en')); });
+    all('#theme button, button.copy').forEach(function (b) { b.title = b.getAttribute('aria-label'); });
+  }
+  langButton.addEventListener('click', function () {
+    root.lang = root.lang === 'ru' ? 'en' : 'ru';
+    save('lang', root.lang);
+    applyLang();
   });
+  applyLang();
+
+  /* the navigation gets its line once the page scrolls */
+  var nav = document.getElementById('nav');
+  function onScroll() { nav.classList.toggle('scrolled', window.scrollY > 8); }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  /* the hero session: commands typed quickly, their output line by line (about 3.5 s) */
+  if (root.classList.contains('motion')) {
+    var t = 0.3;
+    all('.tl', session).forEach(function (line) {
+      var typed = line.querySelector('.typed');
+      if (typed) {
+        if (t > 0.3) t += 0.3;
+        line.style.setProperty('--d', t.toFixed(2) + 's');
+        var n = typed.textContent.length;
+        typed.style.setProperty('--n', n);
+        t += n * 0.018 + 0.25;
+      } else {
+        line.style.setProperty('--d', t.toFixed(2) + 's');
+        t += 0.07;
+      }
+    });
+    session.classList.add('play');
+    setTimeout(function () { session.classList.add('done'); }, (t + 0.3) * 1000);
+  }
+
+  /* examples: three tabs; without scripts every example is shown */
+  var tabs = all('#how [role="tab"]');
+  function select(tab, focus) {
+    tabs.forEach(function (t) {
+      var on = t === tab;
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    });
+    if (focus) tab.focus();
+  }
+  tabs.forEach(function (tab, i) {
+    var panel = document.getElementById(tab.getAttribute('aria-controls'));
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', tab.id);
+    panel.tabIndex = 0;
+    tab.addEventListener('click', function () { select(tab, false); });
+    tab.addEventListener('keydown', function (e) {
+      var n = null;
+      if (e.key === 'ArrowRight') n = (i + 1) % tabs.length;
+      else if (e.key === 'ArrowLeft') n = (i - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'Home') n = 0;
+      else if (e.key === 'End') n = tabs.length - 1;
+      if (n !== null) { e.preventDefault(); select(tabs[n], true); }
+    });
+  });
+  select(tabs[0], false);
+
+  /* reveal on scroll */
+  if (root.classList.contains('motion') && 'IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+    all('[data-reveal]').forEach(function (el) { io.observe(el); });
+    root.classList.add('reveal-on');
+  }
+
+  /* copy: the clipboard API, then the old way; if both fail, select the text for Ctrl+C */
+  var status = document.getElementById('status');
+  function oldCopy(text) {
+    var ta = document.createElement('textarea'), ok = false;
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    return ok;
+  }
+  function tell(button, ok, text) {
+    var label = button.querySelector('.label');
+    if (label && !button.dataset.label) button.dataset.label = label.innerHTML;
+    if (label) label.textContent = text;
+    button.classList.toggle('done', ok);
+    status.textContent = text;
+    clearTimeout(button.timer);
+    button.timer = setTimeout(function () { if (label) label.innerHTML = button.dataset.label; button.classList.remove('done'); status.textContent = ''; }, 1800);
+  }
+  all('[data-copy]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var code = document.getElementById(button.getAttribute('data-copy'));
+      var text = code.textContent;
+      function done() { button.focus(); tell(button, true, say('Copied', 'Скопировано')); }
+      function fail() {
+        var range = document.createRange(), sel = window.getSelection();
+        range.selectNodeContents(code); sel.removeAllRanges(); sel.addRange(range);
+        tell(button, false, say('Press Ctrl+C', 'Нажмите Ctrl+C'));
+      }
+      function fallback() { if (oldCopy(text)) done(); else fail(); }
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
+      else fallback();
+    });
+  });
+
+  /* the latest release, from releases.json of this site; nothing happens when there is none yet */
+  if (window.fetch && location.protocol !== 'file:') {
+    fetch('releases.json', { cache: 'no-cache' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        var v = data && data.latest;
+        if (typeof v !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(v)) return;
+        all('.latest').forEach(function (el) { el.textContent = 'v' + v; el.hidden = false; });
+      })
+      .catch(function () {});
+  }
 })();
 </script>
 </body>

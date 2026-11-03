@@ -260,6 +260,19 @@ Describe 'the READMEs' {
             }
         }
     }
+
+    # The site links to headings of the README on GitHub (github.com/quatrebi/wslbin#usage): they must exist there.
+    It 'site/index.html: every link to a heading of the README names one that exists' {
+        $site = [IO.File]::ReadAllText((Join-Path $script:Repo 'site\index.html'), [Text.UTF8Encoding]::new($false))
+        $readme = [regex]::Replace((Read-Readme 'README.md'), '(?ms)^```.*?^```', '')
+        $slugs = foreach ($m in [regex]::Matches($readme, '(?m)^#{1,6}\s+(.+?)\s*$')) {
+            ([regex]::Replace($m.Groups[1].Value.ToLowerInvariant().Replace('`', '').Replace('*', ''), '[^\p{L}\p{N}\p{M} _-]', '')).Replace(' ', '-')
+        }
+        # (#readme is GitHub's own anchor for the whole README, not a heading of it)
+        $anchors = [regex]::Matches($site, 'https://github\.com/quatrebi/wslbin#([A-Za-z0-9_-]+)') | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -ne 'readme' } | Sort-Object -Unique
+        @($anchors).Count | Should -BeGreaterThan 0
+        foreach ($a in $anchors) { @($slugs) | Should -Contain $a -Because "site/index.html links to README#$a" }
+    }
 }
 
 Describe 'the help text of wslbin.ini' {
