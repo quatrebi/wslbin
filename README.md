@@ -3,6 +3,7 @@
 [![CI](https://github.com/quatrebi/wslbin/actions/workflows/ci.yml/badge.svg)](https://github.com/quatrebi/wslbin/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platform: Windows 10 and 11, WSL 2](https://img.shields.io/badge/platform-Windows%2010%2F11%20%2B%20WSL%202-0078D6)
+[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-support%20wslbin-ff7a45?logo=ko-fi&logoColor=white)](https://ko-fi.com/Y7H12A1AMH)
 
 **Linux utilities from WSL as ordinary Windows programs.**
 

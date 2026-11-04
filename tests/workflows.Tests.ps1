@@ -297,8 +297,15 @@ Describe 'the workflows' {
 
     Context 'ci.yml' {
         BeforeAll { $script:Ci = Get-WorkflowText 'ci.yml' }
-        It 'runs on a push to main and develop, and on a pull request, and on nothing else' {
-            $script:Ci | Should -Match '(?m)^on:\n  push:\n    branches: \[main, develop\]\n  pull_request:\n(?!  )'
+        It 'runs on a push to main, on a pull request and by hand, and on nothing else (a push to another branch would build the commit that its pull request builds again)' {
+            $script:Ci | Should -Match '(?m)^on:\n  push:\n    branches: \[main\]\n  pull_request:\n    types: \[opened, synchronize, reopened, ready_for_review\]\n  workflow_dispatch:\n(?!  )'
+        }
+        It 'does not build a draft pull request' {
+            $script:Ci | Should -Match "if: github\.event_name != 'pull_request' \|\| !github\.event\.pull_request\.draft"
+        }
+        It 'caches the NuGet packages by the files that decide their versions' {
+            $script:Ci | Should -Match 'path: ~/\.nuget/packages'
+            $script:Ci | Should -Match "key: nuget-\$\{\{ runner\.os \}\}-\$\{\{ hashFiles\('global\.json', 'wslbin\.csproj', 'Directory\.Build\.props', 'nuget\.config'\) \}\}"
         }
         It 'stops an older run of the same branch when a newer one starts' {
             $script:Ci | Should -Match '(?m)^concurrency:\n  group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n  cancel-in-progress: true\n'
