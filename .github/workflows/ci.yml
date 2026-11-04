@@ -1,5 +1,8 @@
-# Builds the program once and runs the tests on it, on every push to main and develop and on every pull
-# request.
+# Builds the program once and runs the tests on it: on a pull request (not a draft one), on a push to main,
+# and by hand. A push to any other branch (develop included) runs nothing: its pull request does, so a
+# commit is not built twice (once for the push and once for the pull request). A newer push to the same
+# branch or pull request stops the older run. The NuGet packages (the AOT compiler is the big one) are
+# cached by the files that decide their versions, so a build does not download them again.
 #
 # The version of a build is worked out from git (get-version.ps1), so that a push to a branch, a pull
 # request and a release never share one. The program is kept as an artifact for 14 days, before the tests
@@ -16,8 +19,10 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -28,6 +33,8 @@ concurrency:
 
 jobs:
   build-and-test:
+    # a draft pull request waits until it is marked ready
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -42,6 +49,12 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+
+      - name: NuGet packages (the AOT compiler and the runtime packs)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', 'wslbin.csproj', 'Directory.Build.props', 'nuget.config') }}
 
       - name: Version of this build
         id: version
