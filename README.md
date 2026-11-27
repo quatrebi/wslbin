@@ -131,7 +131,7 @@ work on wslbin itself: start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Limitations
 
-- Windows only (10 22H2 or 11), with WSL 2 and one Linux distribution; the program is x64 only, there is no Arm64 build yet.
+- Windows only (10 22H2 or 11), with WSL: wslbin runs in the default Linux distribution, or in the one that `distro =` in `wslbin.ini` names. The tests were run with WSL 2 and Ubuntu 24.04. The program is x64 only, there is no Arm64 build yet.
 - The program is not code-signed. The installer checks the SHA256 of the archive against values from GitHub and from the Pages site; that is not a signature (see [INSTALL.md](INSTALL.md)).
 - Drives are mapped under `/mnt/`. If `/etc/wsl.conf` changes the mount root, `wslbin --doctor` reports it.
 - A current folder on a network share (`\\server\share`), or on a drive that WSL has not mounted, is refused with exit code 125 (the utility would run in the Linux home folder).
