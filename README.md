@@ -41,9 +41,8 @@ rsync -av *.log /mnt/c/backup/
 - **No middleman.** Input and output are not intercepted: pipes, colours and full-screen programs work, and
   the exit code of the utility is the exit code you get (125 means wslbin or `wsl.exe` failed).
 
-> **Status.** It works and is tested, but there is no release yet and the site (GitHub Pages) is not
-> published, so the install command below will work after the first release and the first Pages deployment.
-> Until then, build it from the source: see [Build and use from source](CONTRIBUTING.md#build-and-use-from-source).
+> **Status.** Released: see [Releases](https://github.com/quatrebi/wslbin/releases); the install command takes the latest one.
+> To build it from the source instead, see [Build and use from source](CONTRIBUTING.md#build-and-use-from-source).
 
 ## Install
 
@@ -129,6 +128,19 @@ work on wslbin itself: start with [CONTRIBUTING.md](CONTRIBUTING.md).
 - [INSTALL.md](INSTALL.md): the installer in detail (parameters, scope, checks, update, removal, offline).
 - [`docs/en`](docs/en): the help texts of the program (`wslbin --help`).
 - [CONTRIBUTING.md](CONTRIBUTING.md): build from source, tests, versions, layout of the repository.
+
+## Limitations
+
+- Windows only (10 22H2 or 11), with WSL 2 and one Linux distribution; the program is x64 only, there is no Arm64 build yet.
+- The program is not code-signed. The installer checks the SHA256 of the archive against values from GitHub and from the Pages site; that is not a signature (see [INSTALL.md](INSTALL.md)).
+- Drives are mapped under `/mnt/`. If `/etc/wsl.conf` changes the mount root, `wslbin --doctor` reports it.
+- A current folder on a network share (`\\server\share`), or on a drive that WSL has not mounted, is refused with exit code 125 (the utility would run in the Linux home folder).
+- A relative path is translated only when the file or folder exists in the current folder; a new file such as `.\new.txt` is passed as written, so write `./new.txt` for it.
+- Windows PowerShell 5.1 can mangle arguments that end in a backslash or contain double quotes; use PowerShell 7.
+- Raw mode gives the text to bash as it is: the caller is responsible for what runs.
+- A per-user installation folder can be changed by any program of that user; an all-users installation needs administrator rights, and its folder is protected.
+- Only the utilities that WSL finds can be run. A tool that only a login shell finds needs its folder in `wslbin.ini` (`wslbin --doctor` prints the line).
+- Reports of security problems: see [SECURITY.md](SECURITY.md).
 
 ## License
 

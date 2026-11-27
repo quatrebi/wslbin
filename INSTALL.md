@@ -3,10 +3,6 @@
 The short version is in the [README](README.md#install). This file has the rest: every parameter, where wslbin
 goes, what the checks prove, update, removal and install without a network. [Русский](INSTALL.ru.md).
 
-There is no release yet and the site (GitHub Pages) is not published, so the commands below will work after
-the first release and the first Pages deployment. To use wslbin before that, see
-[CONTRIBUTING.md](CONTRIBUTING.md#build-and-use-from-source).
-
 ## Requirements
 
 - Windows 10 22H2 or Windows 11, x64.

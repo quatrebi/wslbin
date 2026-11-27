@@ -59,8 +59,9 @@ Invoke-Pester ./tests -ExcludeTagFilter WSL        # what needs neither WSL nor 
 
 Versions are automatic (SemVer 2.0). `MAJOR.MINOR` is `VersionPrefix` in [`wslbin.csproj`](wslbin.csproj): the
 one thing a pull request changes by hand, and it is never lowered. `PATCH` is the number of commits since
-that value first appeared, and the rest says where a build comes from: `0.1.4-develop.42+33c8830` is the 42nd
-run of the CI, on `develop`, at that commit; a release has no suffix. `wslbin --version` prints it. Details
+that value first appeared, and the rest says where a build comes from: `0.1.24-pr3.42+33c8830` is the 42nd
+CI run, for pull request 3, at that commit (a push to `main` or a manual run gives `-<branch>.<run>`, for
+example `-main.43`); a release has no suffix. `wslbin --version` prints it. Details
 are in `get-version.ps1` and `Wslbin.Version.psm1`.
 
 ## Layout of the repository
