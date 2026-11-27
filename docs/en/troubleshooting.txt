@@ -21,10 +21,14 @@ Exit codes
   130     wsl.exe itself was ended by Ctrl+C (rare: a utility that Ctrl+C stops gives 2).
 
 Common causes
-  command not found (127)
+  command not found (127), or --link says "not found in WSL"
       The utility is not installed in WSL: wslbin --link <utility> offers to install the apt package.
       Tools in ~/.local/bin or ~/.cargo/bin: bash starts without your profile, add
-      path = ~/.local/bin to wslbin.ini (wslbin --doctor says when this is the cause).
+      path = ~/.local/bin to wslbin.ini (wslbin --doctor says when this is the cause). For a utility
+      that bash without the profile does not find, wslbin asks a login shell once more (bash -l:
+      /etc/profile, then the first of ~/.bash_profile, ~/.bash_login, ~/.profile; not interactive,
+      so a .bashrc that the profile sources stops at its interactive check). When that one finds it, --link, --list and --doctor say where and
+      give the path line for wslbin.ini instead of offering apt. wslbin never writes wslbin.ini itself.
   a translated path does not exist in Linux (C:\x became /mnt/c/x)
       wslbin writes the drives under /mnt/. When root under [automount] in /etc/wsl.conf names
       another folder, wslbin --doctor says so; set root = /mnt/ there and run wsl --shutdown.

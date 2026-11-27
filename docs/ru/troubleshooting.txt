@@ -20,10 +20,14 @@
   130     сам wsl.exe завершён по Ctrl+C (редко: утилита, которую остановил Ctrl+C, даёт 2).
 
 Частые причины
-  command not found (127)
+  command not found (127), или --link пишет "not found in WSL"
       Утилиты нет в WSL: wslbin --link <утилита> предложит установить пакет apt.
       Программы в ~/.local/bin или ~/.cargo/bin: bash запускается без вашего профиля, добавьте
-      path = ~/.local/bin в wslbin.ini (wslbin --doctor говорит, когда причина в этом).
+      path = ~/.local/bin в wslbin.ini (wslbin --doctor говорит, когда причина в этом). Утилиту,
+      которую bash без профиля не нашёл, wslbin ищет ещё раз оболочкой входа (bash -l: /etc/profile,
+      затем первый из ~/.bash_profile, ~/.bash_login, ~/.profile; не интерактивная, так что .bashrc,
+      который подключает профиль, останавливается на проверке интерактивности). Если та её находит, --link, --list и --doctor говорят где и дают строку path для
+      wslbin.ini вместо пакета apt. Сам wslbin в wslbin.ini никогда не пишет.
   переведённого пути нет в Linux (C:\x стал /mnt/c/x)
       wslbin пишет диски под /mnt/. Если root в разделе [automount] файла /etc/wsl.conf называет
       другую папку, wslbin --doctor говорит об этом; поставьте там root = /mnt/ и выполните
