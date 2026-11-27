@@ -14,7 +14,6 @@
 # env: only, never pasted into the text of a run:; tests/workflows.Tests.ps1 checks that. The actions are
 # pinned to the commit of a release tag (the comment names the tag); look up a new one with
 #   git ls-remote --tags https://github.com/<owner>/<action> refs/tags/<tag>
-# Not run on GitHub yet: the repository has not been pushed.
 name: CI
 
 on:

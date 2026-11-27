@@ -87,6 +87,69 @@ Describe 'check-version.ps1' {
     }
 }
 
+Describe 'check-release-order.ps1' {
+    BeforeAll {
+        # git is taken away from the machine, as in tests/version.Tests.ps1
+        $script:SavedGitEnv = @{}
+        foreach ($name in 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_NAMESPACE', 'GIT_COMMON_DIR', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM',
+            'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'HOME', 'XDG_CONFIG_HOME',
+            'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_AUTHOR_DATE', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_COMMITTER_DATE') {
+            $script:SavedGitEnv[$name] = [Environment]::GetEnvironmentVariable($name)
+            Remove-Item -Path "Env:\$name" -ErrorAction SilentlyContinue
+        }
+        $env:GIT_CONFIG_NOSYSTEM = '1'
+        $env:GIT_CONFIG_GLOBAL = Join-Path $script:Work 'no-global-gitconfig'
+        $env:HOME = Join-Path $script:Work 'order-home'
+        $env:XDG_CONFIG_HOME = Join-Path $script:Work 'order-home\xdg'
+        $global:OrderCounter = 0
+
+        # a repository with one empty commit and the given tags; returns its folder
+        function global:New-TaggedRepo([string[]]$Tags) {
+            $global:OrderCounter++
+            $dir = Join-Path $global:WorkflowTestWork ('order-' + $global:OrderCounter)
+            New-Item -ItemType Directory -Path $dir | Out-Null
+            $null = & git -C $dir init -q
+            $null = & git -C $dir -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m one
+            foreach ($t in $Tags) { $null = & git -C $dir tag $t }
+            $dir
+        }
+        function global:Invoke-OrderCheck([string[]]$Tags, [string]$Version) {
+            $dir = New-TaggedRepo $Tags
+            $script = Join-Path $global:WorkflowTestRepo '.github\check-release-order.ps1'
+            Invoke-Child -Arguments @($script, '-Repo', $dir) -Environment @{ VERSION = $Version }
+        }
+    }
+    AfterAll {
+        foreach ($name in $script:SavedGitEnv.Keys) {
+            if ($null -eq $script:SavedGitEnv[$name]) { Remove-Item -Path "Env:\$name" -ErrorAction SilentlyContinue }
+            else { [Environment]::SetEnvironmentVariable($name, $script:SavedGitEnv[$name]) }
+        }
+        Remove-Variable OrderCounter -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It 'passes: <Tags> then <Version>' -ForEach @(
+        @{ Tags = @(); Version = '0.1.0' }
+        @{ Tags = @('v0.1.23'); Version = '0.1.24' }
+        @{ Tags = @('v0.9.0'); Version = '0.10.0' }
+        @{ Tags = @('v1.0.0-rc.1'); Version = '1.0.0' }
+    ) {
+        $r = Invoke-OrderCheck $Tags $Version
+        $r.ExitCode | Should -Be 0 -Because ($r.Out + $r.Err)
+    }
+    It 'fails: <Tags> then <Version>' -ForEach @(
+        @{ Tags = @('v0.1.23'); Version = '0.1.23'; Message = 'not higher than v0\.1\.23' }
+        @{ Tags = @('v0.1.23'); Version = '0.1.22'; Message = 'not higher than v0\.1\.23' }
+        @{ Tags = @('v0.9.0', 'v0.10.0'); Version = '0.9.5'; Message = 'not higher than v0\.10\.0' }
+        @{ Tags = @('v1.0.0'); Version = '1.0.0-rc.2'; Message = 'not higher than v1\.0\.0' }
+        @{ Tags = @('vfoo'); Version = '9.9.9'; Message = 'not v<SemVer 2\.0>' }
+        @{ Tags = @(); Version = '0.1.24; exit 0'; Message = 'not SemVer 2\.0' }
+    ) {
+        $r = Invoke-OrderCheck $Tags $Version
+        $r.ExitCode | Should -Not -Be 0
+        $r.Err | Should -Match $Message
+    }
+}
+
 Describe 'new-releases-json.ps1' {
     BeforeAll {
         $script:Hash = @{}
@@ -426,6 +489,15 @@ Describe 'release.yml' {
         $script:BuildJob | Should -Match 'already released'
         $script:BuildJob | Should -Match 'rev-parse -q --verify'
         $script:BuildJob | Should -Match 'outputs:\n      version: \$\{\{ steps\.version\.outputs\.version \}\}'
+    }
+    It 'refuses a version that is not higher than the highest tag, after the version step and before the build' {
+        $version = $script:BuildJob.IndexOf('id: version')
+        $order = $script:BuildJob.IndexOf('check-release-order.ps1')
+        $build = $script:BuildJob.IndexOf('name: Build (Native AOT)')
+        $version | Should -BeGreaterThan 0
+        $order | Should -BeGreaterThan $version
+        $build | Should -BeGreaterThan $order
+        $script:BuildJob | Should -Match 'check-release-order\.ps1'
     }
     It 'builds once, with the right to read only, checks the program and hands it on as an artifact' {
         $script:BuildJob | Should -Not -Match ': write'

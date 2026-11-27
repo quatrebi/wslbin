@@ -3,7 +3,8 @@
 #
 # The version is the one of the commit (get-version.ps1 -Kind release): MAJOR.MINOR from wslbin.csproj, PATCH
 # counted from git. Five jobs, each with the least rights it needs:
-#   build    reads: works the version out, stops when it is released already, builds the program, checks
+#   build    reads: works the version out, stops when it is released already or is not higher than the
+#            highest v* tag, builds the program, checks
 #            that it reports the version, and hands it on as an artifact
 #   test     reads: runs the tests on that very program (WSLBIN_TEST_EXE)
 #   release  writes the release and signs: makes the zip of that very program, its SHA256 and the
@@ -16,8 +17,7 @@
 # .github/make-package.ps1. What anyone can choose never reaches a shell by being pasted into it (env: only);
 # tests/workflows.Tests.ps1 checks that. The actions are pinned to the commit of a release tag (the comment
 # names it); look up a new one with:  git ls-remote --tags https://github.com/<owner>/<action> refs/tags/<tag>
-# Not run on GitHub yet: the repository has not been pushed. One-time setup: Settings > Pages > Source:
-# "GitHub Actions".
+# First run: v0.1.23 on 2026-11-03, all jobs passed. One-time setup (done): Settings > Pages > Source: GitHub Actions.
 name: Release
 
 on:
@@ -72,6 +72,12 @@ jobs:
               throw "v$env:VERSION is already released: it is the version of this commit. Raise MAJOR.MINOR in a pull request, or push another commit, and run this again."
           }
           exit 0   # (git said "no such tag" with exit code 1, which is what is wanted here)
+
+      - name: Higher than every release
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./.github/check-release-order.ps1
 
       - name: Build (Native AOT)
         shell: pwsh
