@@ -11,7 +11,7 @@
 an IDE, or start them from any program. Windows paths, wildcards, pipes, colours, `Ctrl+C` and exit codes
 work the way you expect.
 
-[Русский](README.ru.md) · [Install](#install) · [Usage](#usage) · [Tab completion](#tab-completion) · [For AI agents](#for-ai-agents) · [Documentation](#documentation)
+[Русский](README.ru.md) · [Website](https://quatrebi.github.io/wslbin/) · [Install](#install) · [Usage](#usage) · [Tab completion](#tab-completion) · [For AI agents](#for-ai-agents) · [Documentation](#documentation)
 
 ## Example
 
