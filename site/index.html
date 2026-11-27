@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>wslbin: Linux utilities as Windows programs</title>
-<meta name="description" content="Run rsync, make, dig and other Linux tools from WSL in PowerShell, cmd or any IDE, with Windows paths, wildcards, pipes and exit codes working as expected.">
+<title>wslbin: run Linux commands from WSL in PowerShell and cmd</title>
+<meta name="description" content="Run rsync, make, dig and other Linux commands from WSL in PowerShell or cmd, with Windows paths, wildcards, pipes and exit codes working as expected.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#f8f9fb" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
@@ -12,13 +12,13 @@
 <meta name="robots" content="index, follow">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="wslbin">
-<meta property="og:title" content="wslbin: Linux utilities as Windows programs">
-<meta property="og:description" content="Run rsync, make, dig and other Linux tools from WSL in PowerShell, cmd or any IDE, with Windows paths, wildcards, pipes and exit codes working as expected.">
+<meta property="og:title" content="wslbin: run Linux commands from WSL in PowerShell and cmd">
+<meta property="og:description" content="Run rsync, make, dig and other Linux commands from WSL in PowerShell or cmd, with Windows paths, wildcards, pipes and exit codes working as expected.">
 <meta property="og:url" content="https://quatrebi.github.io/wslbin/">
 <meta property="og:locale" content="en_US">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="wslbin: Linux utilities as Windows programs">
-<meta name="twitter:description" content="Run rsync, make, dig and other Linux tools from WSL in PowerShell, cmd or any IDE, with Windows paths, wildcards, pipes and exit codes working as expected.">
+<meta name="twitter:title" content="wslbin: run Linux commands from WSL in PowerShell and cmd">
+<meta name="twitter:description" content="Run rsync, make, dig and other Linux commands from WSL in PowerShell or cmd, with Windows paths, wildcards, pipes and exit codes working as expected.">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -27,10 +27,13 @@
   "description": "Run rsync, make, dig and other Linux tools from WSL in PowerShell, cmd or any IDE, with Windows paths, wildcards, pipes and exit codes working as expected.",
   "url": "https://quatrebi.github.io/wslbin/",
   "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "Windows",
+  "operatingSystem": "Windows 10 22H2 or later, Windows 11; requires WSL 2",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "license": "https://opensource.org/licenses/MIT",
-  "downloadUrl": "https://github.com/quatrebi/wslbin/releases/latest"
+  "codeRepository": "https://github.com/quatrebi/wslbin",
+  "downloadUrl": "https://github.com/quatrebi/wslbin/releases/latest",
+  "author": { "@type": "Person", "name": "Dmitriy Khudnitskiy" },
+  "keywords": "WSL, WSL 2, PowerShell, cmd, bash, Linux, rsync, make, dig"
 }
 </script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff7a45'/%3E%3Cpath d='M9 10l6 6-6 6' fill='none' stroke='%232a0d02' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M17 22h6' stroke='%232a0d02' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
@@ -263,6 +266,9 @@ html:not(.js) .pair + .pair { margin-top: 56px; }
 .map mark.p { background: var(--t-path-bg); }
 .map .g { color: var(--t-glob); }
 .why { grid-column: 1 / -1; margin: 0 auto; max-width: 44em; color: var(--text-2); text-align: center; font-size: 15.5px; }
+.faq { max-width: 46em; margin: 0 auto; }
+.faq dt { margin-top: 28px; font-weight: 600; color: var(--text); }
+.faq dd { margin: 8px 0 0; color: var(--text-2); line-height: 1.6; }
 .note { margin: 40px auto 0; max-width: 46em; color: var(--text-2); text-align: center; font-size: 15px; }
 @media (max-width: 760px) {
   .pair { grid-template-columns: minmax(0, 1fr); row-gap: 12px; }
@@ -397,11 +403,11 @@ footer { margin-top: 128px; padding-block: 48px 40px; border-top: 1px solid var(
   <section class="hero" aria-labelledby="title">
     <div class="wrap">
       <h1 id="title">
-        <span data-l="en">Linux tools from WSL, as plain Windows programs.</span>
+        <span data-l="en">Run Linux commands from WSL as plain Windows programs.</span>
         <span data-l="ru">Linux-утилиты из WSL как обычные программы Windows.</span>
       </h1>
       <p class="lead">
-        <span data-l="en">Type <code>rsync</code>, <code>make</code> or <code>dig</code> in PowerShell, cmd or your IDE: paths, wildcards, pipes and exit codes just work.</span>
+        <span data-l="en">Type <code>rsync</code>, <code>make</code> or <code>dig</code> in PowerShell, cmd or your IDE: paths, wildcards, pipes and exit codes just work, with no <code>wsl</code> prefix.</span>
         <span data-l="ru">Набирайте <code>rsync</code>, <code>make</code> или <code>dig</code> в PowerShell, cmd или IDE: пути, шаблоны, пайпы и коды возврата просто работают.</span>
       </p>
       <div class="cta">
@@ -422,7 +428,7 @@ footer { margin-top: 128px; padding-block: 48px 40px; border-top: 1px solid var(
       </div>
       <p class="fine">
         <span><span data-l="en">Windows 10 22H2+ or 11, WSL 2</span><span data-l="ru">Windows 10 22H2+ или 11, WSL 2</span></span>
-        <a href="install.ps1"><span data-l="en">Read the script</span><span data-l="ru">Прочитать скрипт</span></a>
+        <a href="install.ps1"><span data-l="en">Read the install.ps1 script</span><span data-l="ru">Прочитать скрипт</span></a>
         <a href="https://github.com/quatrebi/wslbin/releases/latest"><span data-l="en">Releases</span><span data-l="ru">Релизы</span><span class="latest" hidden></span></a>
       </p>
 
@@ -487,7 +493,7 @@ footer { margin-top: 128px; padding-block: 48px 40px; border-top: 1px solid var(
           <p class="why"><span data-l="en">Braces, <code>$</code>, <code>;</code>, <code>|</code>, quotes and spaces arrive as text: nothing typed can run a second command.</span><span data-l="ru">Скобки, <code>$</code>, <code>;</code>, <code>|</code>, кавычки и пробелы доходят как текст: набранное не запустит вторую команду.</span></p>
         </div>
       </div>
-      <p class="note" data-reveal><span data-l="en">Need <code>$VAR</code>, <code>$(...)</code> or a pipe inside Linux: <code>--wslbin-sh</code> or <code>wslbin -c "..."</code>. To check without running: <code>--wslbin-explain</code>. Details in the <a href="https://github.com/quatrebi/wslbin#usage">README</a>.</span><span data-l="ru">Нужны <code>$VAR</code>, <code>$(...)</code> или пайп внутри Linux: <code>--wslbin-sh</code> или <code>wslbin -c "..."</code>. Проверить без запуска: <code>--wslbin-explain</code>. Подробнее в <a href="https://github.com/quatrebi/wslbin#usage">README</a>.</span></p>
+      <p class="note" data-reveal><span data-l="en">Need <code>$VAR</code>, <code>$(...)</code> or a pipe inside Linux: <code>--wslbin-sh</code> or <code>wslbin -c "..."</code>. To check without running: <code>--wslbin-explain</code>. Details in the <a href="https://github.com/quatrebi/wslbin#usage">Usage section of the README</a>.</span><span data-l="ru">Нужны <code>$VAR</code>, <code>$(...)</code> или пайп внутри Linux: <code>--wslbin-sh</code> или <code>wslbin -c "..."</code>. Проверить без запуска: <code>--wslbin-explain</code>. Подробнее в <a href="https://github.com/quatrebi/wslbin#usage">README</a>.</span></p>
     </div>
   </section>
 
@@ -548,7 +554,24 @@ footer { margin-top: 128px; padding-block: 48px 40px; border-top: 1px solid var(
           <div class="ln"><span class="b">wslbin</span> --init pwsh | Invoke-Expression</div>
         </div>
       </figure>
-      <p class="more" data-reveal><span data-l="en">All users, a specific version, offline, update, remove: <a href="https://github.com/quatrebi/wslbin#install">README</a>.</span><span data-l="ru">Для всех пользователей, конкретная версия, без сети, обновление, удаление: <a href="https://github.com/quatrebi/wslbin#install">README</a>.</span></p>
+      <p class="more" data-reveal><span data-l="en">All users, a specific version, offline, update, remove: <a href="https://github.com/quatrebi/wslbin#install">Install section of the README</a>.</span><span data-l="ru">Для всех пользователей, конкретная версия, без сети, обновление, удаление: <a href="https://github.com/quatrebi/wslbin#install">README</a>.</span></p>
+    </div>
+  </section>
+  <section class="sec" id="faq" aria-labelledby="faq-title">
+    <div class="wrap">
+      <div class="head" data-reveal>
+        <h2 id="faq-title"><span data-l="en">Questions</span><span data-l="ru">Вопросы</span></h2>
+      </div>
+      <dl class="faq" data-reveal>
+        <dt><span data-l="en">Why not just run <code>wsl rsync ...</code>?</span><span data-l="ru">Зачем wslbin, если можно написать <code>wsl rsync ...</code>?</span></dt>
+        <dd><span data-l="en">You can, and it works. wslbin makes the utility a Windows program, so PowerShell, cmd, IDE run buttons and other Windows programs can start it without a <code>wsl</code> prefix, and Windows paths are translated for it.</span><span data-l="ru">Можно, и это работает. wslbin делает утилиту программой Windows: её запускают PowerShell, cmd, кнопки запуска в IDE и другие программы без префикса <code>wsl</code>, а пути Windows переводятся сами.</span></dd>
+        <dt><span data-l="en">Do I need Git Bash, MSYS2 or Cygwin?</span><span data-l="ru">Нужны ли Git Bash, MSYS2 или Cygwin?</span></dt>
+        <dd><span data-l="en">No. The tools run in your own WSL distribution. wslbin only creates small Windows wrappers for them, and it can offer to install a missing utility with apt.</span><span data-l="ru">Нет. Утилиты работают в вашем дистрибутиве WSL. wslbin только создаёт небольшие обёртки для Windows и может предложить установить недостающую утилиту через apt.</span></dd>
+        <dt><span data-l="en">Does it work on Windows 10?</span><span data-l="ru">Работает ли на Windows 10?</span></dt>
+        <dd><span data-l="en">Yes, on Windows 10 22H2 or later, or on Windows 11, with WSL 2 installed. <code>wslbin --doctor</code> checks the setup.</span><span data-l="ru">Да, на Windows 10 22H2 или новее, либо на Windows 11, с установленным WSL 2. Проверить настройку поможет <code>wslbin --doctor</code>.</span></dd>
+        <dt><span data-l="en">Can AI agents use it?</span><span data-l="ru">Могут ли ИИ-агенты им пользоваться?</span></dt>
+        <dd><span data-l="en"><code>wslbin --install-ai-context</code> teaches Claude Code and Codex to call your Linux tools. <code>--remove</code> undoes it.</span><span data-l="ru"><code>wslbin --install-ai-context</code> учит Claude Code и Codex пользоваться вашими Linux-утилитами. <code>--remove</code> отменяет это.</span></dd>
+      </dl>
     </div>
   </section>
 </main>
@@ -567,7 +590,7 @@ footer { margin-top: 128px; padding-block: 48px 40px; border-top: 1px solid var(
           <li><a href="https://github.com/quatrebi/wslbin#readme">README</a></li>
           <li><a href="https://github.com/quatrebi/wslbin/releases"><span data-l="en">Releases</span><span data-l="ru">Релизы</span></a></li>
           <li><a href="https://github.com/quatrebi/wslbin/issues">Issues</a></li>
-          <li><a href="https://github.com/quatrebi/wslbin/blob/main/llms.txt">llms.txt</a></li>
+          <li><a href="llms.txt">llms.txt</a></li>
           <li><a href="https://github.com/quatrebi/wslbin/blob/main/LICENSE"><span data-l="en">License</span><span data-l="ru">Лицензия</span></a></li>
         </ul>
       </nav>
@@ -612,7 +635,7 @@ footer { margin-top: 128px; padding-block: 48px 40px; border-top: 1px solid var(
     langButton.textContent = ru ? 'EN' : 'RU';
     langButton.setAttribute('lang', ru ? 'en' : 'ru');
     langButton.setAttribute('aria-label', ru ? 'English' : 'Русский');
-    document.title = ru ? 'wslbin: Linux-утилиты как программы Windows' : 'wslbin: Linux utilities as Windows programs';
+    document.title = ru ? 'wslbin: Linux-утилиты как программы Windows' : 'wslbin: run Linux commands from WSL in PowerShell and cmd';
     all('[data-label-en]').forEach(function (el) { el.setAttribute('aria-label', el.getAttribute(ru ? 'data-label-ru' : 'data-label-en')); });
     all('#theme button, button.copy').forEach(function (b) { b.title = b.getAttribute('aria-label'); });
   }
