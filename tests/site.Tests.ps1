@@ -27,6 +27,16 @@ Describe 'site' {
         $json = $m[0].Groups[1].Value | ConvertFrom-Json
         $json.'@type' | Should -Be 'SoftwareApplication'
     }
+    It '404.html is a noindex page with a way back to the landing page' {
+        $page = [IO.File]::ReadAllText((Join-Path $script:Repo 'site/404.html'), [Text.Encoding]::UTF8)
+        $page | Should -Match '<meta name="robots" content="noindex"'
+        $page | Should -Match 'href="https://quatrebi\.github\.io/wslbin/"'
+    }
+    It 'llms.txt is published from the repository root' {
+        Test-Path -LiteralPath (Join-Path $script:Repo 'llms.txt') | Should -BeTrue
+        $script:PagesYml | Should -Match 'Copy-Item -LiteralPath llms\.txt'
+        $script:Html | Should -Match 'href="llms\.txt"'
+    }
     It 'sitemap.xml parses and has one url entry' {
         $xml = [xml][IO.File]::ReadAllText((Join-Path $script:Repo 'site/sitemap.xml'), [Text.Encoding]::UTF8)
         @($xml.urlset.url).Count | Should -Be 1
