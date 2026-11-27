@@ -651,3 +651,25 @@ Describe 'the login shell probe, run by bash (Git Bash)' -Skip:$NoGitBash {
         $link.Err | Should -Match ([regex]::Escape("but a login shell finds it at $probeHome/tools/$tool (fix: add the line  path = ~/tools  to "))
     }
 }
+
+Describe 'what a wrapper hands back of the utility (stand-in wsl.exe)' {
+    It 'returns exit code <Code> of the utility as it is, with nothing added on standard error' -ForEach @(
+        @{ Code = 2 }, @{ Code = 3 }, @{ Code = 5 }, @{ Code = 7 }, @{ Code = 126 }, @{ Code = 127 }
+    ) {
+        $wsl = New-FakeWsl -Files @{ 'run.exit' = "$Code" }
+        $r = Invoke-Fake -Wsl $wsl -Name 'grep' -Arguments @('x', 'file')
+        $r.ExitCode | Should -Be $Code
+        $r.Err | Should -BeNullOrEmpty
+    }
+
+    It 'returns standard output and standard error in UTF-8 with Cyrillic byte for byte' {
+        $ru = -join [char[]](0x41F, 0x440, 0x438, 0x432, 0x435, 0x442, 0x20, 0x43C, 0x438, 0x440)   # "Привет мир"
+        $outBytes = [Text.Encoding]::UTF8.GetBytes("$ru out`n")
+        $errBytes = [Text.Encoding]::UTF8.GetBytes("$ru err`n")
+        $wsl = New-FakeWsl -Files @{ 'run.out' = [byte[]]$outBytes; 'run.err' = [byte[]]$errBytes; 'run.exit' = '1' }
+        $r = Invoke-Fake -Wsl $wsl -Name 'grep' -Arguments @('x', 'file')
+        $r.ExitCode | Should -Be 1
+        [Linq.Enumerable]::SequenceEqual([byte[]][Text.Encoding]::UTF8.GetBytes($r.Out), [byte[]]$outBytes) | Should -BeTrue -Because $r.Out
+        [Linq.Enumerable]::SequenceEqual([byte[]][Text.Encoding]::UTF8.GetBytes($r.Err), [byte[]]$errBytes) | Should -BeTrue -Because $r.Err
+    }
+}

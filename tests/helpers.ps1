@@ -42,6 +42,10 @@ function Invoke-Wslbin {
         [string]$Ini,
         [hashtable]$Env = @{},
         [string]$InputText,
+        # exact bytes for standard input (instead of -InputText), and the exact bytes of standard output
+        # in .OutBytes (.Out is then empty): for tests of binary data
+        [byte[]]$InputBytes,
+        [switch]$OutputBytes,
         [string]$WorkingDirectory,
         [string]$Dir,
         [switch]$IniWithBom,
@@ -81,13 +85,23 @@ function Invoke-Wslbin {
     }
 
     $p = [Diagnostics.Process]::Start($psi)
-    $outTask = $p.StandardOutput.ReadToEndAsync()
+    $outBuffer = $null
+    if ($OutputBytes) {
+        $outBuffer = [IO.MemoryStream]::new()
+        $outTask = $p.StandardOutput.BaseStream.CopyToAsync($outBuffer)
+    }
+    else { $outTask = $p.StandardOutput.ReadToEndAsync() }
     $errTask = $p.StandardError.ReadToEndAsync()
-    if ($null -ne $InputText) { $p.StandardInput.Write($InputText) }
+    if ($null -ne $InputBytes) {
+        $p.StandardInput.BaseStream.Write($InputBytes, 0, $InputBytes.Length)
+        $p.StandardInput.BaseStream.Flush()
+    }
+    elseif ($null -ne $InputText) { $p.StandardInput.Write($InputText) }
     $p.StandardInput.Close()
     $p.WaitForExit()
     [pscustomobject]@{
-        Out      = $outTask.GetAwaiter().GetResult()
+        Out      = $(if ($OutputBytes) { '' } else { $outTask.GetAwaiter().GetResult() })
+        OutBytes = $(if ($OutputBytes) { $null = $outTask.GetAwaiter().GetResult(); $outBuffer.ToArray() } else { $null })
         Err      = $errTask.GetAwaiter().GetResult()
         ExitCode = $p.ExitCode
         Dir      = $Dir
