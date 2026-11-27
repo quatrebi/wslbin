@@ -443,7 +443,7 @@ Describe 'the workflows' {
         }
         It 'publishes the files of the site by name: the landing page and the loader, not a draft in site/' {
             $build = Get-JobText $script:Pages 'build'
-            $build | Should -Match "foreach \(\`$file in 'index\.html', 'install\.ps1'\)"
+            $build | Should -Match "foreach \(\`$file in 'index\.html', 'install\.ps1', 'sitemap\.xml'\)"
             $build | Should -Not -Match 'site/\*|site\\\*'
             $build | Should -Not -Match 'v2\.html'
         }
