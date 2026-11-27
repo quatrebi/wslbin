@@ -1578,6 +1578,9 @@ Describe 'setup\uninstall.ps1, its functions in this process' {
         $script:FakeAdmin = $Admin; $script:FakeUac = $Uac
         function Test-Administrator { $script:FakeAdmin }
         function Test-UacEnabled { $script:FakeUac }
+        # with the faked rights the real one would choose a folder under Program Files (and a process
+        # without the rights cannot make it): the scratch folders of this test go in its own folder
+        function Get-ScratchRoot { $f.Base }
         $script:Started = $false
         function Invoke-WslbinStep { $script:Started = $true }
         $UninstallKey = $f.Key; $NoPath = $true; $Purge = $false; $Elevated = $false
