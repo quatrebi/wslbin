@@ -225,7 +225,7 @@
             $known = @(@($releases.releases) | ForEach-Object { $_.version }) -join ', '
             throw "There is no release $Version. Released: $known."
         }
-        if ([string]$release.sha256 -notmatch '^[0-9a-f]{64}\z') { throw "releases.json has no SHA256 for $Version." }
+        if (-not [regex]::IsMatch([string]$release.sha256, '^[0-9A-Fa-f]{64}\z')) { throw "releases.json has no SHA256 for $Version." }
         Test-Download ([string]$release.url) ([string]$release.asset)
 
         # questions, only where nobody said and somebody can answer

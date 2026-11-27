@@ -48,12 +48,13 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
+# installations that were refused (see Get-RefusalReason), or whose copy with administrator rights failed:
+# either makes the exit code 2
+$script:Refused = 0
+
 # Whether an installation is the one for all users or for the user: the entry in Apps that names its
 # folder says so (an install for all users may be in any folder). A folder without an entry is the one
 # for all users only when it is the usual place of that.
-# installations that were refused (see Get-RefusalReason)
-$script:Refused = 0
-
 function Get-InstallationScope([string]$Dir) {
     $wanted = ConvertTo-ComparablePath $Dir
     foreach ($forScope in 'AllUsers', 'CurrentUser') {
@@ -313,9 +314,15 @@ function Uninstall-Wslbin {
             $arguments = @('-InstallDir', (ConvertTo-PowerShellLiteral $dir)) + (Get-ParameterTokens @('Purge', 'NoPath', 'UninstallKey') -PowerShell) + @('-Quiet', '-Elevated')
             $code = Invoke-Elevated $files 'setup\uninstall.ps1' $arguments
             if ($null -eq $code) { throw "The administrator rights were refused: the installation for all users in $dir was not removed." }
-            if ($code -ne 0) {
-                Write-Problem "The copy with administrator rights ended with exit code $code (its window said why)."
+            if ($code -eq 1) {
+                # a file in use: that installation stays, with its entry in Apps, and a run after the program has ended removes it
+                Write-Problem "The copy with administrator rights could not remove everything in $dir (exit code 1; its window said what). Close the programs that use it and run this again."
                 $script:Problems++
+            }
+            elseif ($code -ne 0) {
+                # it refused the installation or failed: exit code 2 here too, not the 1 of a file in use
+                Write-Problem "The copy with administrator rights failed or refused the installation in $dir (exit code $code; its window said why)."
+                $script:Refused++
             }
         }
         foreach ($dir in $user) { Remove-Installation $dir 'CurrentUser' }
@@ -333,7 +340,7 @@ function Uninstall-Wslbin {
     }
 }
 
-# The exit code at the end: 0, 1 when something could not be removed, 2 when an installation was refused.
+# The exit code at the end: 0, 1 when something could not be removed, 2 when an installation was refused or the copy with administrator rights failed.
 function Complete-Uninstall {
     if ($script:Refused -gt 0) { return 2 }
     if ($script:Problems -gt 0) { return 1 }

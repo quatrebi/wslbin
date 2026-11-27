@@ -25,7 +25,7 @@
     Where it goes: -Scope CurrentUser is %LOCALAPPDATA%\Programs\wslbin and the PATH and Apps entry of
     the user, with no administrator rights. -Scope AllUsers is C:\Program Files\wslbin and the PATH and
     Apps entry of the machine; it asks for administrator rights (UAC). Without -Scope it is CurrentUser,
-    unless wslbin is installed for all users: then that installation is updated. -InstallDir names
+    unless wslbin is installed for all users: then that installation is updated, in the folder it is in. -InstallDir names
     another folder; for all users, one that only administrators can change (a new one is made so). A
     folder that holds files with the names of wslbin's (LICENSE, manifest.json, setup\) and is not an
     installation of wslbin is refused: they belong to something else. When
@@ -77,12 +77,20 @@ $ErrorActionPreference = 'Stop'
 # those rights: with another account's password at the UAC prompt, the copy with rights runs as that
 # account and would change its profiles and its WSL instead.
 
+# The installation for all users that its entry in Apps names, when that folder holds wslbin.exe; else $null.
+# (An entry whose folder holds no wslbin any more names nothing.)
+function Get-MachineInstallation {
+    $entry = Get-UninstallEntry (Get-UninstallHive 'AllUsers')
+    if (-not $entry -or -not $entry.Location -or -not (Test-Path -LiteralPath (Join-Path $entry.Location 'wslbin.exe'))) { return $null }
+    $entry
+}
+
 # The scope without -Scope: the one for all users when wslbin is installed there (in -InstallDir, if
 # that is given), so that an update does not make a second copy for the user that the one for all users
 # hides (it comes first in PATH); else the one of the user.
 function Get-DefaultScope([string]$Dir) {
-    $machine = Get-UninstallEntry (Get-UninstallHive 'AllUsers')
-    if (-not $machine -or -not $machine.Location -or -not (Test-Path -LiteralPath (Join-Path $machine.Location 'wslbin.exe'))) { return 'CurrentUser' }
+    $machine = Get-MachineInstallation
+    if (-not $machine) { return 'CurrentUser' }
     if ($Dir -and (ConvertTo-ComparablePath $Dir) -ne (ConvertTo-ComparablePath $machine.Location)) { return 'CurrentUser' }
     Write-Step "wslbin $($machine.Version) is installed for all users in $($machine.Location): that one is updated (-Scope CurrentUser installs a copy for this user instead)"
     'AllUsers'
@@ -96,10 +104,16 @@ function Test-InstallationIntact([string]$Dir, [string]$Version) {
     $manifest -and $manifest.Version -ceq $Version
 }
 
-# The scope and the folder: -InstallDir, or the usual one of the scope.
+# The scope and the folder: -InstallDir; for all users, the folder of the installation that is there (one
+# scope holds one installation, and it may be in any folder, not only Program Files); else the usual one
+# of the scope.
 function Set-InstallTarget([string]$ForScope) {
     $script:EffectiveScope = $ForScope
     $script:Dir = $InstallDir
+    if (-not $script:Dir -and $ForScope -eq 'AllUsers') {
+        $found = Get-MachineInstallation
+        if ($found) { $script:Dir = $found.Location }
+    }
     if (-not $script:Dir) { $script:Dir = Get-DefaultInstallDir $ForScope }
 }
 
