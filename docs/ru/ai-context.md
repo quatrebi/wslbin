@@ -57,5 +57,6 @@
 - Не запускайте утилиту из сетевой папки (`\\server\share`): wslbin откажется с кодом `125`,
   потому что утилита запустилась бы в домашней папке Linux. Перейдите в папку на диске.
 - Программам из `~/.local/bin` или `~/.cargo/bin` нужна строка `path = ~/.local/bin` в `wslbin.ini`
-  (рядом с `wslbin.exe`); `wslbin --doctor` говорит, когда причина в этом.
+  (рядом с `wslbin.exe`); `wslbin --doctor` говорит, когда причина в этом, а если утилиту находит
+  только оболочка входа, `wslbin --link`, `--list` и `--doctor` печатают точную строку `path = ...`.
 - Подробнее: `wslbin --help` и `wslbin --help <modes|paths|globs|env|completion|config|troubleshooting>`.

@@ -62,5 +62,6 @@ the arguments, and can be combined.
 - Do not run a utility from a network folder (`\\server\share`): wslbin refuses with `125`,
   because the utility would run in the Linux home folder. Change to a folder on a drive.
 - Tools installed under `~/.local/bin` or `~/.cargo/bin` need `path = ~/.local/bin` in `wslbin.ini`
-  (next to `wslbin.exe`); `wslbin --doctor` says when that is the problem.
+  (next to `wslbin.exe`); `wslbin --doctor` says when that is the problem, and when only a login
+  shell finds a utility, `wslbin --link`, `--list` and `--doctor` print the exact `path = ...` line.
 - More: `wslbin --help` and `wslbin --help <modes|paths|globs|env|completion|config|troubleshooting>`.

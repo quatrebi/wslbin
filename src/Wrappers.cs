@@ -108,17 +108,28 @@ internal static class Wrappers
     }
 
     // What is wrong with a wrapper, as short phrases. "present" is null when WSL could not be asked;
-    // self is the content of wslbin.exe.
-    public static List<string> Check(string name, string dir, byte[] self, Dictionary<string, bool>? present)
+    // loginOnly holds what only a login shell finds (WslQuery.FindInLoginShell; null: not asked); self is
+    // the content of wslbin.exe.
+    public static List<string> Check(string name, string dir, byte[] self, Dictionary<string, bool>? present,
+                                     Dictionary<string, LoginShellHit>? loginOnly)
     {
         List<string> problems = [];
-        if (present != null && present.TryGetValue(name, out bool there) && !there) problems.Add("not found in WSL");
+        if (present != null && present.TryGetValue(name, out bool there) && !there)
+            problems.Add(loginOnly != null && loginOnly.TryGetValue(name, out LoginShellHit? hit) ? LoginShellProblem(hit) : "not found in WSL");
         if (!SameContent(PathOf(dir, name), self)) problems.Add("outdated (run: wslbin --link)");
         if (Conflicts.Find(name, dir) is string conflict) problems.Add($"conflict: {conflict}");
         if (Conflicts.HidesInPowerShell(name))
             problems.Add($"PowerShell runs its own '{name}' first: use {name}.exe there (or: wslbin --init pwsh)");
         return problems;
     }
+
+    // The phrase for a utility that only a login shell finds. It starts as the plain one does, and has no
+    // "; ", which separates the phrases.
+    static string LoginShellProblem(LoginShellHit hit) =>
+        $"not found in WSL without your profile, but a login shell finds it at {hit.Shown} " +
+        (hit.Entry != null
+            ? $"(fix: path = {hit.Entry} in wslbin.ini)"
+            : "(wslbin.ini cannot name that folder, as it has ':' or ',': link the program into another folder and add that one)");
 }
 
 // The PATH of Windows: the folders it lists, and what a name finds in them.

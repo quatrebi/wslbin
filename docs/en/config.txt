@@ -27,7 +27,9 @@ to it; for the other keys the last one counts.
 
   path = ~/.local/bin, ~/.cargo/bin
       Linux directories put in front of PATH (commas only, so a name may have blanks; ~ is the
-      Linux home). A directory name with a colon is ignored.
+      Linux home; quotes keep a blank at the end of a name: path = "~/tools "). A directory name
+      with a colon is ignored. When only a login shell finds a utility, wslbin --link, --list and
+      --doctor print the line to add here.
 
   args.ls = --color=auto
       Arguments put in front of the ones you type. Blanks separate them; single or double quotes

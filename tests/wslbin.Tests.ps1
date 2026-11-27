@@ -431,6 +431,14 @@ Describe 'wslbin.ini' {
         $r.Err | Should -Match "line 1: path entry '/a:b' contains ':'"
     }
 
+    It 'takes $HOME in a path entry for text (so a folder in the home folder is written with ~)' {
+        Get-Explain -Ini 'path = $HOME/.local/bin' | Should -BeExactly 'export PATH="\$HOME/.local/bin:$PATH"; tool'
+    }
+
+    It 'keeps a blank at the end of a path entry in quotes' {
+        Get-Explain -Ini 'path = "~/tools "' | Should -BeExactly 'export PATH="$HOME/tools :$PATH"; tool'
+    }
+
     It 'adds nothing without the path key' {
         Get-Explain -Arguments @('x') | Should -BeExactly 'tool x'
     }

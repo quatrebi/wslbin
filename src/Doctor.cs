@@ -237,11 +237,13 @@ internal static class Doctor
             return;
         }
         Dictionary<string, bool>? present = null;
+        Dictionary<string, LoginShellHit>? loginOnly = null;
         if (wslWorks)
         {
             try
             {
                 present = WslQuery.Which(cfg, wrappers);
+                loginOnly = WslQuery.FindInLoginShell(cfg, wrappers, present);
             }
             catch (WslbinException ex)
             {
@@ -252,7 +254,7 @@ internal static class Doctor
         int bad = 0;
         foreach (string n in wrappers)
         {
-            List<string> problems = Wrappers.Check(n, dir, self, present);
+            List<string> problems = Wrappers.Check(n, dir, self, present, loginOnly);
             if (problems.Count == 0) continue;
             bad++;
             report.Warn($"{n}: {string.Join("; ", problems)}");

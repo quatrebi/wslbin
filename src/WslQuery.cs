@@ -11,6 +11,11 @@ internal sealed record Distro(string Name, bool IsDefault, string State, string 
 
 internal sealed record WslResult(int ExitCode, string Output, string Error);
 
+// A utility that bash without the profile does not find and a login shell does (WslQuery.FindInLoginShell):
+// FullPath where; Shown the same with ~ for the home folder; Entry the value of a path line of wslbin.ini
+// that adds its folder, or null when wslbin.ini cannot name that folder.
+internal sealed record LoginShellHit(string FullPath, string Shown, string? Entry);
+
 // What wslbin learns about WSL itself: calls to wsl.exe whose output it reads (management commands
 // and Tab completion; a wrapper never captures anything), and the registry.
 internal static class WslQuery
@@ -186,6 +191,94 @@ internal static class WslQuery
 
     // Whether a name is a command in WSL.
     public static bool Has(Config cfg, string name) => Which(cfg, [name]).GetValueOrDefault(name);
+
+    // The lines of the answer of FindInLoginShell start with Mark. ":HOME" is no utility: a file name of
+    // Windows has no ':', so no wrapper has one.
+    const string Mark = "@@wslbin@@";
+    const string HomeMark = Mark + ":HOME=";
+
+    // Where a login shell finds the names that Which said are missing (false in present; a name that its
+    // answer lacks is not asked about). wslbin starts bash without the profile, and on Ubuntu it is
+    // ~/.profile that puts ~/.local/bin in PATH: a utility there is "not found in WSL" for wslbin while the
+    // terminal of the user runs it. bash -l reads /etc/profile and the first of ~/.bash_profile,
+    // ~/.bash_login and ~/.profile; without -i a .bashrc that the profile sources stops at its interactive
+    // guard (one without a guard runs in full). One call for all the names, and only this call reads the profile: the utilities
+    // still run without it. What the profile prints is not read: only lines that start with Mark count, and
+    // each answer starts a line of its own, also after text without a line end. type -P finds files only
+    // (no alias, no function); builtin and if keep a function or set -e of the profile out of the way. A call
+    // that fails, or that a profile keeps longer than 10 seconds, finds nothing: the caller says what it
+    // said before.
+    public static Dictionary<string, LoginShellHit> FindInLoginShell(Config cfg, IEnumerable<string> names, Dictionary<string, bool> present)
+    {
+        var found = new Dictionary<string, LoginShellHit>(StringComparer.Ordinal);
+        List<string> asked = [.. names.Where(n => present.TryGetValue(n, out bool there) && !there).Distinct(StringComparer.Ordinal)];
+        if (asked.Count == 0) return found;
+
+        string script =
+            "printf '" + HomeMark + "%s\\n' \"$HOME\"; " +
+            "bash -lc 'for n; do if p=$(builtin type -P -- \"$n\"); then builtin printf \"\\n" + Mark + "%s=%s\\n\" \"$n\" \"$p\"; fi; done' _ " +
+            string.Join(' ', asked.Select(Bash.Literal)) + " </dev/null 2>/dev/null";
+        WslResult r;
+        try
+        {
+            r = RunBash(cfg, script, timeoutMs: Math.Min(TimeoutMs, 10_000));
+        }
+        catch (WslbinException)
+        {
+            return found;
+        }
+
+        // (the exit code tells nothing: whatever the profile did decides it)
+        string? home = null;
+        List<(string Name, string FullPath)> answers = [];
+        foreach (string line in Text.Lines(r.Output))
+        {
+            if (line.StartsWith(HomeMark, StringComparison.Ordinal))
+            {
+                home ??= line[HomeMark.Length..];
+            }
+            else if (line.StartsWith(Mark, StringComparison.Ordinal))
+            {
+                string answer = line[Mark.Length..];
+                int eq = answer.IndexOf('=');
+                if (eq > 0) answers.Add((answer[..eq], answer[(eq + 1)..]));
+            }
+        }
+        home = home?.TrimEnd('/');
+        if (home != null && (!home.StartsWith('/') || home.Any(char.IsControl))) home = null;
+        foreach ((string name, string fullPath) in answers)
+        {
+            // the first answer for a name counts
+            if (asked.Contains(name) && IsProgramPath(fullPath, name)) found.TryAdd(name, Hit(fullPath, home));
+        }
+        return found;
+    }
+
+    // An absolute path of a program named name, outside the drives of Windows (wslbin.ini is for folders of
+    // Linux), with nothing in it that a line cannot hold or that was not UTF-8.
+    static bool IsProgramPath(string path, string name) =>
+        path.StartsWith('/') && path.EndsWith($"/{name}", StringComparison.Ordinal) &&
+        !path.StartsWith(Paths.MountRoot, StringComparison.Ordinal) &&
+        !path.Any(c => char.IsControl(c) || c == '�');
+
+    // The folder of the program as a path line of wslbin.ini writes it. wslbin.ini splits the value at ','
+    // and leaves out an entry with ':' (Config.AddPathDirs), so such a folder has no line; it trims the
+    // blanks around an entry, so a name that ends in a blank goes in quotes.
+    static LoginShellHit Hit(string fullPath, string? home)
+    {
+        string dir = fullPath[..fullPath.LastIndexOf('/')];
+        string folder = WithTilde(dir.Length == 0 ? "/" : dir, home);
+        string? entry = folder.Contains(',') || folder.Contains(':') ? null
+            : char.IsWhiteSpace(folder[^1]) ? $"\"{folder}\"" : folder;
+        return new LoginShellHit(fullPath, WithTilde(fullPath, home), entry);
+    }
+
+    // A path in the home folder with ~ in front, as wslbin.ini writes it (Bash.InDoubleQuotes makes it $HOME).
+    static string WithTilde(string path, string? home) =>
+        home == null ? path :
+        path == home ? "~" :
+        path.StartsWith($"{home}/", StringComparison.Ordinal) ? $"~{path[home.Length..]}" :
+        path;
 
     public static bool HasAptGet(Config cfg) => RunBash(cfg, "command -v apt-get >/dev/null 2>&1").ExitCode == 0;
 

@@ -462,3 +462,214 @@ Describe 'a folder that has no Linux path' {
         Get-Calls $wsl | Should -BeNullOrEmpty
     }
 }
+
+Describe 'a utility that only a login shell finds (--link)' {
+    # --link asks bash without the profile first (run call 1, WslQuery.Which), then a login shell about the
+    # names that it lacks, once (call 2, WslQuery.FindInLoginShell), and only then apt (calls 3 and up). Of
+    # the answer of call 2 only the lines that start with @@wslbin@@ count.
+    BeforeAll {
+        function New-LoginWsl([string]$Answer, [hashtable]$More = @{}) {
+            $files = @{ 'run.1.out' = "missing k9s`n"; 'run.2.out' = $Answer }
+            foreach ($key in $More.Keys) { $files[$key] = $More[$key] }
+            New-FakeWsl -Files $files
+        }
+        # What --link says about k9s on standard error: a login shell found it at $At, and wslbin.ini names
+        # its folder as $Entry (none: it cannot); without $At, the text of apt, as before.
+        function Get-LinkText([string]$At, [string]$Entry, [string]$Ini) {
+            if (-not $At) { return 'wslbin: k9s: not found in WSL, and apt knows no package that provides it (try: wsl -u root apt-get update)' }
+            $start = "wslbin: k9s: not found in WSL without your profile (wslbin does not read it), but a login shell finds it at $At"
+            if (-not $Entry) { return "$start, in a folder that wslbin.ini cannot name, as it has ':' or ',' (fix: link the program into another folder, add that folder to $Ini with a path line, then repeat: wslbin --link k9s)" }
+            "$start (fix: add the line  path = $Entry  to $Ini, then repeat: wslbin --link k9s)"
+        }
+    }
+
+    It 'names the folder and the line for wslbin.ini, and goes on to apt no more' {
+        $wsl = New-LoginWsl "@@wslbin@@:HOME=/home/u`n@@wslbin@@k9s=/home/u/.local/bin/k9s`n"
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--link', '--dry-run', 'k9s')
+        $r.ExitCode | Should -Be 125
+        $want = Get-LinkText -At '/home/u/.local/bin/k9s' -Entry '~/.local/bin' -Ini (Join-Path $r.Dir 'wslbin.ini')
+        [string]::Equals($r.Err.TrimEnd("`n"), $want, [StringComparison]::Ordinal) | Should -BeTrue -Because $r.Err
+        $r.Out | Should -BeNullOrEmpty
+        $calls = @(Get-Calls $wsl)
+        $calls.Count | Should -Be 2 -Because ($calls -join "`n")
+        $calls[1] | Should -Match ([regex]::Escape('bash -lc ''for n; do if p=$(builtin type -P -- "$n"); then builtin printf'))
+        $calls[1] | Should -Match ([regex]::Escape("' _ k9s </dev/null 2>/dev/null"))
+        Test-Path (Join-Path $r.Dir 'wslbin.ini') | Should -BeFalse -Because 'wslbin never writes wslbin.ini itself'
+    }
+
+    It 'keeps the text of apt when the login shell finds nothing either' {
+        $wsl = New-LoginWsl "@@wslbin@@:HOME=/home/u`n"
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--link', '--dry-run', 'k9s')
+        $r.ExitCode | Should -Be 125
+        [string]::Equals($r.Err.TrimEnd("`n"), (Get-LinkText), [StringComparison]::Ordinal) | Should -BeTrue -Because $r.Err
+    }
+
+    It 'keeps the text of apt, and gives up soon, when the login shell does not answer' {
+        $wsl = New-LoginWsl '' @{ 'run.2.sleep' = '60000' }
+        $wsl.WSLBIN_TEST_QUERY_TIMEOUT_MS = '3000'
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--link', '--dry-run', 'k9s')
+        $watch.Elapsed.TotalSeconds | Should -BeLessThan 30
+        $r.ExitCode | Should -Be 125
+        [string]::Equals($r.Err.TrimEnd("`n"), (Get-LinkText), [StringComparison]::Ordinal) | Should -BeTrue -Because $r.Err
+    }
+
+    It 'waits for the login shell no longer than 10 seconds, whatever the timeout of other calls' {
+        # (the probe is call 2: the cap is Math.Min(TimeoutMs, 10 s) in WslQuery.FindInLoginShell)
+        $wsl = New-LoginWsl '' @{ 'run.2.sleep' = '60000' }
+        $wsl.WSLBIN_TEST_QUERY_TIMEOUT_MS = '60000'
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--link', '--dry-run', 'k9s')
+        $watch.Elapsed.TotalSeconds | Should -BeGreaterThan 8
+        $watch.Elapsed.TotalSeconds | Should -BeLessThan 40
+        $r.ExitCode | Should -Be 125
+        $calls = @(Get-Calls $wsl)
+        $calls.Count | Should -BeGreaterThan 1 -Because 'the second call is the login shell'
+        $calls[1] | Should -Match ([regex]::Escape('bash -lc'))
+        [string]::Equals($r.Err.TrimEnd("`n"), (Get-LinkText), [StringComparison]::Ordinal) | Should -BeTrue -Because $r.Err
+    }
+
+    It 'asks no login shell when bash without the profile finds the utility (path = ~/.local/bin)' {
+        $wsl = New-FakeWsl -Files @{ 'run.out' = "ok k9s`n" }
+        $r = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Env $wsl -Ini "path = ~/.local/bin`n" -Arguments @('--link', '--dry-run', 'k9s')
+        $r.ExitCode | Should -Be 0 -Because $r.Err
+        $r.Out | Should -Match 'would create .*k9s\.exe'
+        @(Get-Calls $wsl).Count | Should -Be 1
+        $words = [IO.File]::ReadAllText((Join-Path $wsl.FAKE_WSL_DIR 'args.bin'), [Text.UTF8Encoding]::new($false)) -split "`0"
+        $words[[array]::IndexOf($words, '-c') + 1] | Should -BeLike 'export PATH="$HOME/.local/bin:$PATH"; for n in k9s; *'
+    }
+
+    It '--link reads <Case>' -ForEach @(
+        @{ Case = 'what a profile prints around the marked lines'; At = '/home/u/.local/bin/k9s'; Entry = '~/.local/bin'
+           Answer = "Welcome to Ubuntu 24.04`n@@wslbin@@:HOME=/home/u`n * Documentation:  https://help.ubuntu.com`n@@wslbin@@k9s=/home/u/.local/bin/k9s`nbye`n" }
+        @{ Case = 'no marker in the middle of a line'; At = '/home/u/.local/bin/k9s'; Entry = '~/.local/bin'
+           Answer = "@@wslbin@@:HOME=/home/u`nno line end@@wslbin@@k9s=/tmp/evil/k9s`n@@wslbin@@k9s=/home/u/.local/bin/k9s`n" }
+        @{ Case = 'lines that end in CR LF'; At = '/home/u/.local/bin/k9s'; Entry = '~/.local/bin'
+           Answer = "@@wslbin@@:HOME=/home/u`r`n@@wslbin@@k9s=/home/u/.local/bin/k9s`r`n" }
+        @{ Case = 'the home folder after the answer, with a slash at its end'; At = '/home/u/.local/bin/k9s'; Entry = '~/.local/bin'
+           Answer = "@@wslbin@@k9s=/home/u/.local/bin/k9s`n@@wslbin@@:HOME=/home/u/`n" }
+        @{ Case = 'the first of two answers for a name'; At = '/home/u/bin/k9s'; Entry = '~/bin'
+           Answer = "@@wslbin@@:HOME=/home/u`n@@wslbin@@k9s=/home/u/bin/k9s`n@@wslbin@@k9s=/home/u/.local/bin/k9s`n" }
+        @{ Case = 'a folder with a blank in its name'; At = '/home/u/my tools/k9s'; Entry = '~/my tools'
+           Answer = "@@wslbin@@:HOME=/home/u`n@@wslbin@@k9s=/home/u/my tools/k9s`n" }
+        @{ Case = 'a folder whose name ends in a blank, in quotes'; At = '/home/u/tools /k9s'; Entry = '"~/tools "'
+           Answer = "@@wslbin@@:HOME=/home/u`n@@wslbin@@k9s=/home/u/tools /k9s`n" }
+        @{ Case = 'a folder outside the home folder'; At = '/opt/k9s/bin/k9s'; Entry = '/opt/k9s/bin'
+           Answer = "@@wslbin@@:HOME=/home/u`n@@wslbin@@k9s=/opt/k9s/bin/k9s`n" }
+        @{ Case = 'no home folder: the folder as it is'; At = '/home/u/.local/bin/k9s'; Entry = '/home/u/.local/bin'
+           Answer = "@@wslbin@@k9s=/home/u/.local/bin/k9s`n" }
+        @{ Case = 'a folder that wslbin.ini cannot name (a comma)'; At = '/home/u/a,b/k9s'; Entry = $null
+           Answer = "@@wslbin@@:HOME=/home/u`n@@wslbin@@k9s=/home/u/a,b/k9s`n" }
+        @{ Case = 'nothing in a folder of Windows (/mnt/c)'; At = $null; Entry = $null
+           Answer = "@@wslbin@@:HOME=/home/u`n@@wslbin@@k9s=/mnt/c/tools/k9s`n" }
+        @{ Case = 'nothing for a path that is not absolute'; At = $null; Entry = $null
+           Answer = "@@wslbin@@:HOME=/home/u`n@@wslbin@@k9s=k9s`n@@wslbin@@k9s=./k9s`n" }
+        @{ Case = 'nothing for another file name, or another name'; At = $null; Entry = $null
+           Answer = "@@wslbin@@:HOME=/home/u`n@@wslbin@@k9s=/home/u/bin/k9s-old`n@@wslbin@@jq=/home/u/bin/jq`n@@wslbin@@K9S=/home/u/bin/K9S`n" }
+        @{ Case = 'nothing in lines without the mark'; At = $null; Entry = $null
+           Answer = "k9s=/home/u/.local/bin/k9s`n/home/u/.local/bin/k9s`n" }
+    ) {
+        $wsl = New-LoginWsl $Answer
+        $r = Invoke-Fake -Wsl $wsl -Arguments @('--link', '--dry-run', 'k9s')
+        $r.ExitCode | Should -Be 125
+        $want = Get-LinkText -At $At -Entry $Entry -Ini (Join-Path $r.Dir 'wslbin.ini')
+        [string]::Equals($r.Err.TrimEnd("`n"), $want, [StringComparison]::Ordinal) | Should -BeTrue -Because "got: $($r.Err) want: $want"
+    }
+}
+
+Describe 'a wrapper whose utility only a login shell finds (--list, --doctor)' {
+    BeforeAll {
+        $script:LoginFound = "@@wslbin@@:HOME=/home/u`n@@wslbin@@k9s=/home/u/.local/bin/k9s`n"
+        $script:LoginProblem = 'not found in WSL without your profile, but a login shell finds it at ~/.local/bin/k9s (fix: path = ~/.local/bin in wslbin.ini)'
+        function New-WrapperHome([string[]]$Names) {
+            $h = Join-Path $global:WslbinTest.Work ([guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $h | Out-Null
+            New-TestWrappers -Dir $h -Names $Names -From $global:WslbinTest.FakeExe
+            $h
+        }
+    }
+
+    It '--list says where, with the line for wslbin.ini, and asks the login shell only about what is missing' {
+        $h = New-WrapperHome @('jq', 'k9s')
+        $wsl = New-FakeWsl -Files @{ 'run.1.out' = "ok jq`nmissing k9s`n"; 'run.2.out' = $script:LoginFound }
+        $r = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Env $wsl -Arguments @('--list')
+        $r.ExitCode | Should -Be 0 -Because $r.Err
+        $lines = @($r.Out -split "`n" | Where-Object { $_ })
+        $lines.Count | Should -Be 2 -Because $r.Out
+        $lines[0] | Should -Match '^jq\s+ok$'
+        $lines[1] | Should -Match ('^k9s\s+' + [regex]::Escape($script:LoginProblem) + '$')
+        $calls = @(Get-Calls $wsl)
+        $calls.Count | Should -Be 2
+        $calls[1] | Should -Match ([regex]::Escape("' _ k9s </dev/null 2>/dev/null"))
+    }
+
+    It '--doctor warns with the same words' {
+        $h = New-WrapperHome @('k9s')
+        $list = ConvertTo-Utf16 ("  NAME              STATE           VERSION`r`n* Ubuntu-24.04      Running         2`r`n")
+        # (every bash call of --doctor gets this one answer: the version of bash, what Which and the login shell say)
+        $wsl = New-FakeWsl -Files @{ 'list.out' = $list; 'run.out' = "5.2.21(1)-release`nmissing k9s`n$script:LoginFound" }
+        $r = Invoke-Wslbin -From $global:WslbinTest.FakeExe -Name 'wslbin' -Dir $h -Env $wsl -Arguments @('--doctor')
+        $r.Out | Should -Match ([regex]::Escape("[warn] k9s: $script:LoginProblem"))
+    }
+}
+
+Describe 'the login shell probe, run by bash (Git Bash)' -Skip:$NoGitBash {
+    # The script of call 2 of --link (WslQuery.FindInLoginShell), taken from the command line of the stand-in
+    # wsl.exe and run in Git Bash as wsl.exe runs it in WSL, with a home folder of the test whose .profile
+    # prints text and puts a folder of tools in front of PATH (not ~/bin: Git's own profile adds that one).
+    It 'finds a program that only the profile puts in PATH, nothing for a name that is not there, and --link reads that answer' {
+        $id = [guid]::NewGuid().ToString('N')
+        $tool = "wslbintest-$id"
+        $none = "wslbintest-none-$id"
+        $fakeHome = Join-Path $global:WslbinTest.Work "home-$id"
+        New-Item -ItemType Directory -Path (Join-Path $fakeHome 'tools') -Force | Out-Null
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        [IO.File]::WriteAllText((Join-Path $fakeHome '.profile'),
+            "echo 'Welcome, this is the profile'`nprintf 'no line end'`necho 'to standard error' >&2`nexport PATH=`"`$HOME/tools:`$PATH`"`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $fakeHome "tools\$tool"), "#!/bin/sh`necho hi`n", $utf8)
+
+        # call 2 answers that it found both, so that --link stops there and args.bin holds that call
+        $wsl = New-FakeWsl -Files @{ 'run.1.out' = "missing $tool`nmissing $none`n"; 'run.2.out' = "@@wslbin@@$tool=/x/$tool`n@@wslbin@@$none=/x/$none`n" }
+        $null = Invoke-Fake -Wsl $wsl -Arguments @('--link', '--dry-run', $tool, $none)
+        @(Get-Calls $wsl).Count | Should -Be 2
+
+        $folder = New-FileDir -Files @()
+        Copy-Item (Join-Path $wsl.FAKE_WSL_DIR 'args.bin') (Join-Path $folder 'handed.bin')
+        $run = 'mapfile -d "" w < handed.bin; for ((i = 0; i < ${#w[@]}; i++)); do [[ ${w[i]} == -c ]] && break; done; ' +
+               'exec bash --noprofile --norc -c "${w[i+1]}" "${w[@]:i+2}"'
+        $r = Invoke-GitBash -Script $run -WorkingDirectory $folder -Env @{ HOME = $fakeHome }
+        $r.Out | Should -Match 'Welcome, this is the profile' -Because "the login shell reads .profile; err: $($r.Err)"
+        $marked = @($r.Out -split "`n" | Where-Object { $_.StartsWith('@@wslbin@@', [StringComparison]::Ordinal) })
+        $marked.Count | Should -Be 2 -Because $r.Out
+        $marked[0] | Should -Match '^@@wslbin@@:HOME=/'
+        $probeHome = $marked[0].Substring('@@wslbin@@:HOME='.Length)
+        [string]::Equals($marked[1], "@@wslbin@@$tool=$probeHome/tools/$tool", [StringComparison]::Ordinal) | Should -BeTrue -Because $marked[1]
+
+        $again = New-FakeWsl -Files @{ 'run.1.out' = "missing $tool`n"; 'run.2.out' = $r.Out }
+        $link = Invoke-Fake -Wsl $again -Arguments @('--link', '--dry-run', $tool)
+        $link.ExitCode | Should -Be 125
+        $link.Err | Should -Match ([regex]::Escape("but a login shell finds it at $probeHome/tools/$tool (fix: add the line  path = ~/tools  to "))
+    }
+}
+
+Describe 'what a wrapper hands back of the utility (stand-in wsl.exe)' {
+    It 'returns exit code <Code> of the utility as it is, with nothing added on standard error' -ForEach @(
+        @{ Code = 2 }, @{ Code = 3 }, @{ Code = 5 }, @{ Code = 7 }, @{ Code = 126 }, @{ Code = 127 }
+    ) {
+        $wsl = New-FakeWsl -Files @{ 'run.exit' = "$Code" }
+        $r = Invoke-Fake -Wsl $wsl -Name 'grep' -Arguments @('x', 'file')
+        $r.ExitCode | Should -Be $Code
+        $r.Err | Should -BeNullOrEmpty
+    }
+
+    It 'returns standard output and standard error in UTF-8 with Cyrillic byte for byte' {
+        $ru = -join [char[]](0x41F, 0x440, 0x438, 0x432, 0x435, 0x442, 0x20, 0x43C, 0x438, 0x440)   # "Привет мир"
+        $outBytes = [Text.Encoding]::UTF8.GetBytes("$ru out`n")
+        $errBytes = [Text.Encoding]::UTF8.GetBytes("$ru err`n")
+        $wsl = New-FakeWsl -Files @{ 'run.out' = [byte[]]$outBytes; 'run.err' = [byte[]]$errBytes; 'run.exit' = '1' }
+        $r = Invoke-Fake -Wsl $wsl -Name 'grep' -Arguments @('x', 'file')
+        $r.ExitCode | Should -Be 1
+        [Linq.Enumerable]::SequenceEqual([byte[]][Text.Encoding]::UTF8.GetBytes($r.Out), [byte[]]$outBytes) | Should -BeTrue -Because $r.Out
+        [Linq.Enumerable]::SequenceEqual([byte[]][Text.Encoding]::UTF8.GetBytes($r.Err), [byte[]]$errBytes) | Should -BeTrue -Because $r.Err
+    }
+}
