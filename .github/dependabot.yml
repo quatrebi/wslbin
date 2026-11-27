@@ -5,8 +5,9 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    target-branch: develop
     schedule:
-      interval: weekly
+      interval: monthly
     commit-message:
       prefix: "ci(github)"
     open-pull-requests-limit: 5

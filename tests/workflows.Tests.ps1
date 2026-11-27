@@ -514,7 +514,8 @@ Describe 'dependabot.yml' {
     It 'watches the actions of the workflows, weekly, and nothing else yet' {
         $script:Dependabot | Should -Match '(?m)^version: 2$'
         @([regex]::Matches($script:Dependabot, '(?m)^\s*- package-ecosystem: (\S+)') | ForEach-Object { $_.Groups[1].Value }) | Should -Be @('github-actions')
-        $script:Dependabot | Should -Match '(?m)^      interval: weekly$'
+        $script:Dependabot | Should -Match '(?m)^      interval: monthly$'
+        $script:Dependabot | Should -Match '(?m)^    target-branch: develop$'
         $script:Dependabot | Should -Match '(?m)^    directory: /$'
     }
 }
