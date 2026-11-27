@@ -28,7 +28,7 @@ internal static class WrapperCommands
         List<string> candidates = Writable(names, dir, failed);
         // A wrapper for a utility that is not in WSL would only ever print "command not found".
         // Wrappers that already exist are only refreshed, which needs no check.
-        if (!refreshing) candidates = InWsl(cfg, candidates, yes, dryRun, failed);
+        if (!refreshing) candidates = InWsl(cfg, candidates, exePath, yes, dryRun, failed);
 
         if (dryRun)
         {
@@ -90,19 +90,39 @@ internal static class WrapperCommands
         return result;
     }
 
-    // The names whose utility is in WSL, or has been installed with apt now.
-    static List<string> InWsl(Config cfg, List<string> names, bool yes, bool dryRun, List<string> failed)
+    // The names whose utility is in WSL, or has been installed with apt now. Before apt, a login shell is
+    // asked about the missing names (WslQuery.FindInLoginShell): what it finds is not for apt, its folder
+    // belongs in wslbin.ini, and wslbin does not write that file itself.
+    static List<string> InWsl(Config cfg, List<string> names, string exePath, bool yes, bool dryRun, List<string> failed)
     {
         if (names.Count == 0) return names;
         Dictionary<string, bool> present = WslQuery.Which(cfg, names);
+        Dictionary<string, LoginShellHit> loginOnly = WslQuery.FindInLoginShell(cfg, names, present);
         List<string> result = [];
         foreach (string n in names)
         {
-            string? reason = present.GetValueOrDefault(n) ? null : Apt.MakeAvailable(cfg, n, yes, dryRun);
+            string? reason =
+                present.GetValueOrDefault(n) ? null :
+                loginOnly.TryGetValue(n, out LoginShellHit? hit) ? OnlyInLoginShell(n, hit, exePath) :
+                Apt.MakeAvailable(cfg, n, yes, dryRun);
             if (reason == null) result.Add(n);
             else failed.Add($"{n}: {reason}");
         }
         return result;
+    }
+
+    // Why --link makes no wrapper for a utility that only a login shell finds, with the line that
+    // wslbin.ini needs for it.
+    static string OnlyInLoginShell(string name, LoginShellHit hit, string exePath)
+    {
+        string ini = Config.PathFor(exePath);
+        if (!Wrappers.CanWrite(Path.GetDirectoryName(exePath)!)) ini += " as administrator";
+        string where = hit.Entry == null ? ", in a folder that wslbin.ini cannot name, as it has ':' or ','" : "";
+        string fix = hit.Entry == null
+            ? $"link the program into another folder, add that folder to {ini} with a path line"
+            : $"add the line  path = {hit.Entry}  to {ini}";
+        return $"not found in WSL without your profile (wslbin does not read it), but a login shell finds it at {hit.FullPath}{where} " +
+               $"(fix: {fix}, then repeat: wslbin --link {name})";
     }
 
     static void Write(string exePath, string dir, List<string> names, List<string> failed)
@@ -267,10 +287,12 @@ internal static class WrapperCommands
         }
 
         Dictionary<string, bool>? present = null;
+        Dictionary<string, LoginShellHit>? loginOnly = null;
         string? wslProblem = null;
         try
         {
             present = WslQuery.Which(cfg, wrappers);
+            loginOnly = WslQuery.FindInLoginShell(cfg, wrappers, present);
         }
         catch (WslbinException ex)
         {
@@ -281,7 +303,7 @@ internal static class WrapperCommands
         int width = wrappers.Max(n => n.Length) + 2;
         foreach (string n in wrappers)
         {
-            List<string> problems = Wrappers.Check(n, dir, self, present);
+            List<string> problems = Wrappers.Check(n, dir, self, present, loginOnly);
             // "ok" would claim that the utility is in WSL, which nobody could check
             if (present == null) problems.Insert(0, "not checked in WSL");
             Out.Info(n.PadRight(width) + (problems.Count == 0 ? "ok" : string.Join("; ", problems)));

@@ -492,4 +492,61 @@ Describe 'with real WSL' -Tag 'WSL' -Skip:$NoWsl {
         $chain = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Ini 'path = ~/wslbin-test-bin' -Arguments @('-c', 'true && wslbintest-hello | cat')
         $chain.Out.Trim() | Should -BeExactly 'extra-path-works'
     }
+
+    Context 'a utility in a folder that no profile names' {
+        # A folder of its own in the Linux home, made and removed here. The real ~/.profile is never touched
+        # (and HOME cannot be changed for a login shell under wsl.exe: WSLENV does not reach it), so the
+        # login shell knows this folder as little as bash without the profile does.
+        BeforeAll {
+            $script:LoginId = [guid]::NewGuid().ToString('N')
+            $script:LoginTool = "wslbintest-$script:LoginId"
+            $script:LoginDir = "wslbin-test-bin-$script:LoginId"
+            & wsl.exe --exec bash --noprofile --norc -c "mkdir -p ~/$script:LoginDir && printf '#!/bin/sh\necho login-probe-works\n' > ~/$script:LoginDir/$script:LoginTool && chmod +x ~/$script:LoginDir/$script:LoginTool"
+        }
+
+        AfterAll {
+            # (a literal prefix and a checked id: this must never become rm -rf ~/)
+            if ([regex]::IsMatch([string]$script:LoginId, '^[0-9a-f]{32}\z')) {
+                & wsl.exe --exec bash --noprofile --norc -c "rm -rf ~/wslbin-test-bin-$script:LoginId" 2>$null
+            }
+        }
+
+        It 'without the path key: not found in WSL, no word of a login shell, no wrapper' {
+            $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--link', $script:LoginTool)
+            $r.ExitCode | Should -Be 125
+            $r.Err | Should -Match "$([regex]::Escape($script:LoginTool)): not found in WSL"
+            $r.Err | Should -Not -Match 'login shell'
+            Test-Path (Join-Path $script:H "$script:LoginTool.exe") | Should -BeFalse
+        }
+
+        It 'with a path line for that folder: the wrapper is made, runs, and --list calls it ok' {
+            $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Ini "path = ~/$script:LoginDir`n" -Arguments @('--link', $script:LoginTool)
+            $r.ExitCode | Should -Be 0 -Because $r.Err
+            $r.Out | Should -Match "created $([regex]::Escape($script:LoginTool))\.exe"
+            (Invoke-Wslbin -Name $script:LoginTool -Dir $script:H).Out.Trim() | Should -BeExactly 'login-probe-works'
+            $list = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--list')
+            @($list.Out -split "`n" | Where-Object { $_ -match "^$([regex]::Escape($script:LoginTool))\s" }) | Should -Match '\sok$' -Because $list.Err
+        }
+
+        It 'names the folder and the line for wslbin.ini for a program of this machine that only a login shell finds (skipped when there is none)' {
+            # read-only: lists the programs in the folders that only the login shell has in PATH
+            $discover = @'
+export LC_ALL=C; plain=":$PATH:"; out=$(bash -lc 'printf "\n@@path@@%s\n" "$PATH"' </dev/null 2>/dev/null); login=${out##*@@path@@}; printf '%s\n' "$HOME"; IFS=: read -ra dirs <<< "$login"; for d in "${dirs[@]}"; do case "$d" in /mnt/*|*,*|*' ') continue;; /*) ;; *) continue;; esac; case "$plain" in *":$d:"*) continue;; esac; for f in "$d"/*; do n=${f##*/}; [[ $n =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ && $n != *.exe && $n != *. && -f $f && -x $f ]] || continue; command -v -- "$n" >/dev/null 2>&1 && continue; printf '%s\t%s\n' "$d" "$n"; done; done
+'@
+            $saved = [Console]::OutputEncoding
+            [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+            try { $lines = @(& wsl.exe --exec bash --noprofile --norc -c $discover) } finally { [Console]::OutputEncoding = $saved }
+            $wslHome = if ($lines.Count -gt 0) { $lines[0] } else { '' }
+            $pick = $lines | Select-Object -Skip 1 | ForEach-Object { $d, $n = $_ -split "`t", 2; [pscustomobject]@{ Dir = $d; Name = $n } } |
+                Where-Object { $_.Name -and -not (Test-Path -Path "$env:SystemRoot\System32\$($_.Name).*") } | Select-Object -First 1
+            if (-not $pick) { Set-ItResult -Skipped -Because 'no program in WSL is found by a login shell only'; return }
+            $entry = if ($pick.Dir -ceq $wslHome) { '~' }
+                     elseif ($pick.Dir.StartsWith("$wslHome/", [StringComparison]::Ordinal)) { '~' + $pick.Dir.Substring($wslHome.Length) }
+                     else { $pick.Dir }
+            $r = Invoke-Wslbin -Name 'wslbin' -Dir $script:H -Env $script:Env -Arguments @('--link', '--dry-run', $pick.Name)
+            $r.ExitCode | Should -Be 125
+            $r.Err | Should -Match ([regex]::Escape("$($pick.Name): not found in WSL without your profile (wslbin does not read it), but a login shell finds it at $($pick.Dir)/$($pick.Name) (fix: add the line  path = $entry  to "))
+            Test-Path (Join-Path $script:H "$($pick.Name).exe") | Should -BeFalse
+        }
+    }
 }
