@@ -17,7 +17,9 @@
 
     The exit code is 0, or 1 when something could not be removed (a program that runs holds its file:
     close it and run this again; until then the installation stays, with its entry in Apps), or 2 when
-    it failed.
+    it failed or refused an installation: with administrator rights and UAC on, a per-user installation is
+    not removed (nothing of its folder is run or deleted: remove it from a PowerShell without those rights),
+    and neither is a folder that has a link in it.
 
 .EXAMPLE
     .\setup\uninstall.ps1 -Quiet
@@ -49,6 +51,9 @@ $ErrorActionPreference = 'Stop'
 # Whether an installation is the one for all users or for the user: the entry in Apps that names its
 # folder says so (an install for all users may be in any folder). A folder without an entry is the one
 # for all users only when it is the usual place of that.
+# installations that were refused (see Get-RefusalReason)
+$script:Refused = 0
+
 function Get-InstallationScope([string]$Dir) {
     $wanted = ConvertTo-ComparablePath $Dir
     foreach ($forScope in 'AllUsers', 'CurrentUser') {
@@ -95,10 +100,30 @@ function Remove-Wrappers([string]$Dir, [string[]]$Names) {
     , $left
 }
 
+# Why an installation is not removed, or $null. (1) A per-user installation, which the user can change, is
+# not trusted with administrator rights: with UAC on, a PowerShell that has them runs nothing of that
+# folder and deletes nothing in it (any program of the user could have replaced wslbin.exe). With UAC off
+# there is no boundary, and it is removed as before. (2) A folder with a junction or a symbolic link on
+# its path or inside it: a link could send the deletion elsewhere, or the run to another program.
+function Get-RefusalReason([string]$Dir, [string]$ForScope) {
+    if ($ForScope -eq 'CurrentUser' -and (Test-Administrator) -and (Test-UacEnabled)) {
+        return "The installation in $Dir is one for the user, whose folder the user can change, and this PowerShell has administrator rights: nothing of that folder is run or deleted with them, and its PATH entry and hooks stay. Remove it from a PowerShell without administrator rights: run `"$(Join-Path $Dir 'setup\uninstall.ps1')`" there as the user."
+    }
+    $link = Get-ReparsePointIn $Dir
+    if ($link) { return "The folder $Dir contains a link ($link), refusing: nothing of it is run or deleted. Remove the link, or delete the installation by hand." }
+    $null
+}
+
 # One installation: its wrappers, its PATH entry, its files, its entry in Apps, and the folder when
 # nothing of the user's is left in it. Nothing is run from the folder: the wrappers are found by their
 # product name, as wslbin finds them.
 function Remove-Installation([string]$Dir, [string]$ForScope) {
+    $reason = Get-RefusalReason $Dir $ForScope
+    if ($reason) {
+        Write-Problem $reason
+        $script:Refused++
+        return
+    }
     $exe = Join-Path $Dir 'wslbin.exe'
     $hive = Get-UninstallHive $ForScope
 
@@ -253,9 +278,19 @@ function Uninstall-Wslbin {
 
     # the installations to remove: the folder named, or the one this script is in, or the usual places
     # and what the entries in Apps name; and which of them are for all users
-    $all = Get-Installations @($InstallDir)
+    $all = @(Get-Installations @($InstallDir))
     $targets = $all
     if ($InstallDir) { $targets = @(Select-UniquePath @($InstallDir) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'wslbin.exe') }) }
+    # (what is refused stays installed: it counts as another installation below, so its hooks stay)
+    $refused = @()
+    foreach ($dir in $targets) {
+        $reason = Get-RefusalReason $dir (Get-InstallationScope $dir)
+        if (-not $reason) { continue }
+        Write-Problem $reason
+        $script:Refused++
+        $refused += $dir
+    }
+    $targets = @($targets | Where-Object { $refused -notcontains $_ })
     $machine = @($targets | Where-Object { (Get-InstallationScope $_) -eq 'AllUsers' })
     $user = @($targets | Where-Object { $machine -notcontains $_ })
     if ($targets.Count -eq 0) { Write-Step 'wslbin is not installed in the usual places (use -InstallDir if it is elsewhere)' }
@@ -298,8 +333,9 @@ function Uninstall-Wslbin {
     }
 }
 
-# The exit code at the end: 0, or 1 when something could not be removed.
+# The exit code at the end: 0, 1 when something could not be removed, 2 when an installation was refused.
 function Complete-Uninstall {
+    if ($script:Refused -gt 0) { return 2 }
     if ($script:Problems -gt 0) { return 1 }
     0
 }

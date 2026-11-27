@@ -73,6 +73,44 @@ function Test-Administrator {
     (New-Object Security.Principal.WindowsPrincipal $identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Whether User Account Control is on (EnableLUA; a missing value counts as on). With it off, an account in
+# the Administrators group has the rights all the time and there is no boundary to protect.
+function Test-UacEnabled {
+    try {
+        $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System')
+        if (-not $key) { return $true }
+        try { return ([int]$key.GetValue('EnableLUA', 1)) -ne 0 }
+        finally { $key.Close() }
+    }
+    catch { return $true }
+}
+
+function Test-IsReparsePoint([string]$Path) {
+    try { $attributes = [IO.File]::GetAttributes($Path) }
+    catch { return $false }
+    ($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+}
+
+# The first junction or symbolic link on the path of $Dir (each component) or inside it, or $null. A link
+# is never followed: neither the walk nor anything that uses this answer may go through one.
+function Get-ReparsePointIn([string]$Dir) {
+    $path = [IO.Path]::GetFullPath($Dir)
+    while ($path) {
+        if (Test-IsReparsePoint $path) { return $path }
+        $path = [IO.Path]::GetDirectoryName($path)
+    }
+    $pending = New-Object System.Collections.Generic.Stack[string]
+    if ([IO.Directory]::Exists($Dir)) { $pending.Push([IO.Path]::GetFullPath($Dir)) }
+    while ($pending.Count -gt 0) {
+        $current = $pending.Pop()
+        foreach ($item in [IO.Directory]::EnumerateFileSystemEntries($current)) {
+            if (Test-IsReparsePoint $item) { return $item }
+            if ([IO.Directory]::Exists($item)) { $pending.Push($item) }
+        }
+    }
+    $null
+}
+
 function Get-DefaultInstallDir([string]$ForScope) {
     if ($ForScope -eq 'AllUsers') { return Join-Path $env:ProgramFiles 'wslbin' }
     Join-Path $env:LOCALAPPDATA 'Programs\wslbin'

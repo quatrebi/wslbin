@@ -16,6 +16,22 @@ BeforeDiscovery {
     $Shells = @(@{ Shell = 'pwsh'; Exe = 'pwsh' })
     $winPs = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     if (Test-Path $winPs) { $Shells += @{ Shell = 'Windows PowerShell 5.1'; Exe = $winPs } }
+    # A wslbin that is really installed here (the usual folders, or an entry in Apps) is found by an uninstall
+    # that is not given -InstallDir: PowerShell resets ProgramFiles in the environment of a child, so the
+    # tests cannot hide the usual folder of all users. Tests whose result depends on "no other
+    # installation" skip themselves then, and never run an uninstall that could reach the real one.
+    $RealInstall = $false
+    foreach ($usual in @((Join-Path $env:ProgramFiles 'wslbin'), (Join-Path $env:LOCALAPPDATA 'Programs\wslbin'))) {
+        if (Test-Path -LiteralPath (Join-Path $usual 'wslbin.exe')) { $RealInstall = $true }
+    }
+    foreach ($hive in @([Microsoft.Win32.Registry]::LocalMachine, [Microsoft.Win32.Registry]::CurrentUser)) {
+        $appsKey = $hive.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Uninstall\wslbin')
+        if ($appsKey) {
+            $where = [string]$appsKey.GetValue('InstallLocation', '')
+            if ($where -and (Test-Path -LiteralPath (Join-Path $where 'wslbin.exe'))) { $RealInstall = $true }
+            $appsKey.Close()
+        }
+    }
     $NoWsl = $true
     try {
         $null = & wsl.exe -l -q 2>$null
@@ -1547,6 +1563,109 @@ Describe 'setup\uninstall.ps1, its functions in this process' {
         # (the copy with the rights was not really started, so the installation is still there)
         Test-Path (Join-Path $elsewhere 'wslbin.exe') | Should -BeTrue
     }
+
+    # One uninstall in this process, with an installation of the test as the one found: admin rights and UAC
+    # are faked, the hives and the usual folders are those of the test. Returns the exit code;
+    # $script:Started says whether wslbin.exe was run.
+    BeforeAll {
+    function Invoke-InProcessUninstall($f, [bool]$Admin, [bool]$Uac, [string]$Dir, [switch]$UsualIsInstall) {
+        $machine = New-FakeMachineHive
+        function Get-UninstallHive([string]$ForScope) { if ($ForScope -eq 'AllUsers') { return $machine }; [Microsoft.Win32.Registry]::CurrentUser }
+        function Get-DefaultInstallDir([string]$ForScope) {
+            if ($ForScope -eq 'CurrentUser' -and $UsualIsInstall) { return $f.Install }
+            Join-Path $f.Base "usual-$ForScope"
+        }
+        $script:FakeAdmin = $Admin; $script:FakeUac = $Uac
+        function Test-Administrator { $script:FakeAdmin }
+        function Test-UacEnabled { $script:FakeUac }
+        $script:Started = $false
+        function Invoke-WslbinStep { $script:Started = $true }
+        $UninstallKey = $f.Key; $NoPath = $true; $Purge = $false; $Elevated = $false
+        $InstallDir = $Dir; $ProfileRoot = $f.Docs; $ClinkDir = $f.Clink
+        $script:Problems = 0; $script:Refused = 0
+        $saved = @{ CLAUDE_CONFIG_DIR = $env:CLAUDE_CONFIG_DIR; CODEX_HOME = $env:CODEX_HOME }
+        try {
+            $env:CLAUDE_CONFIG_DIR = Join-Path $f.Base 'no-claude-folder-here'
+            $env:CODEX_HOME = Join-Path $f.Base 'no-codex-folder-here'
+            Uninstall-Wslbin 6>$null 3>$null
+            Complete-Uninstall
+        }
+        finally {
+            foreach ($name in $saved.Keys) {
+                if ($null -eq $saved[$name]) { Remove-Item "Env:\$name" -ErrorAction SilentlyContinue } else { Set-Item "Env:\$name" $saved[$name] }
+            }
+        }
+    }
+    }
+
+    It 'with administrator rights and UAC on, refuses a per-user installation: exit code 2, nothing of its folder run or deleted, its entry in Apps kept' {
+        $f = New-InstallFolders
+        (Install-Test 'pwsh' (New-Package) $f).ExitCode | Should -Be 0
+        $code = Invoke-InProcessUninstall $f $true $true $f.Install
+        $code | Should -Be 2
+        $script:Started | Should -BeFalse
+        Test-Path (Join-Path $f.Install 'wslbin.exe') | Should -BeTrue
+        Test-Path (Join-Path $f.Install 'setup\uninstall.ps1') | Should -BeTrue
+        Get-AppsEntry $f | Should -Not -BeNullOrEmpty
+    }
+
+    It 'with administrator rights and UAC off, removes a per-user installation as before' {
+        $f = New-InstallFolders
+        (Install-Test 'pwsh' (New-Package) $f).ExitCode | Should -Be 0
+        $code = Invoke-InProcessUninstall $f $true $false $f.Install
+        $code | Should -Be 0
+        $script:Started | Should -BeTrue
+        Test-Path $f.Install | Should -BeFalse
+        Get-AppsEntry $f | Should -BeNullOrEmpty
+    }
+
+    It 'without administrator rights, removes a per-user installation as before, UAC on or off' {
+        foreach ($uac in $true, $false) {
+            $f = New-InstallFolders
+            (Install-Test 'pwsh' (New-Package) $f).ExitCode | Should -Be 0
+            $code = Invoke-InProcessUninstall $f $false $uac $f.Install
+            $code | Should -Be 0
+            Test-Path $f.Install | Should -BeFalse
+        }
+    }
+
+    It 'removes the only installation that it finds, when -InstallDir is not given (one folder is a string, not a list: it once ran Join-Path on its first letter)' {
+        $f = New-InstallFolders
+        (Install-Test 'pwsh' (New-Package) $f).ExitCode | Should -Be 0
+        $code = Invoke-InProcessUninstall $f $false $true '' -UsualIsInstall
+        $code | Should -Be 0
+        $script:Problems | Should -Be 0
+        Test-Path $f.Install | Should -BeFalse
+    }
+
+    It 'refuses a folder with a junction inside, and does not follow it' {
+        $f = New-InstallFolders
+        (Install-Test 'pwsh' (New-Package) $f).ExitCode | Should -Be 0
+        $target = Join-Path $f.Base 'junction-target'
+        New-Item -ItemType Directory -Path $target | Out-Null
+        [IO.File]::WriteAllText((Join-Path $target 'keep.txt'), 'keep')
+        $link = Join-Path $f.Install 'linked'
+        $null = & cmd.exe /c mklink /J "`"$link`"" "`"$target`"" 2>&1
+        if (-not (Test-IsReparsePoint $link)) { Set-ItResult -Skipped -Because 'this account cannot make a junction here (mklink /J failed)'; return }
+        $code = Invoke-InProcessUninstall $f $false $true $f.Install
+        $code | Should -Be 2
+        $script:Started | Should -BeFalse
+        Test-Path (Join-Path $f.Install 'wslbin.exe') | Should -BeTrue
+        Test-Path (Join-Path $target 'keep.txt') | Should -BeTrue
+        Get-AppsEntry $f | Should -Not -BeNullOrEmpty
+    }
+
+    It 'refuses an install folder that is reached through a junction (a link on its path)' {
+        $f = New-InstallFolders
+        (Install-Test 'pwsh' (New-Package) $f).ExitCode | Should -Be 0
+        $alias = Join-Path $f.Base 'alias'
+        $null = & cmd.exe /c mklink /J "`"$alias`"" "`"$($f.Install)`"" 2>&1
+        if (-not (Test-IsReparsePoint $alias)) { Set-ItResult -Skipped -Because 'this account cannot make a junction here (mklink /J failed)'; return }
+        $code = Invoke-InProcessUninstall $f $false $true $alias
+        $code | Should -Be 2
+        $script:Started | Should -BeFalse
+        Test-Path (Join-Path $f.Install 'wslbin.exe') | Should -BeTrue
+    }
 }
 
 Describe 'setup\uninstall.ps1 in <Shell>' -ForEach $Shells {
@@ -1607,7 +1726,7 @@ Describe 'setup\uninstall.ps1 in <Shell>' -ForEach $Shells {
         Test-Path (Join-Path $f.Install 'wslbin.exe') | Should -BeFalse
     }
 
-    It 'run from an unpacked package, which is no installation, leaves the package alone and looks in the usual places' {
+    It 'run from an unpacked package, which is no installation, leaves the package alone and looks in the usual places' -Skip:$RealInstall {
         $p = New-Package -Version '0.1.7'
         $f = New-InstallFolders
         $r = Invoke-Script -Exe $Exe -Script (Join-Path $p.Dir 'setup\uninstall.ps1') -Arguments @('-NoPath', '-ProfileRoot', $f.Docs, '-ClinkDir', $f.Clink, '-Quiet')
@@ -1640,7 +1759,7 @@ Describe 'setup\uninstall.ps1 in <Shell>' -ForEach $Shells {
         Get-AppsEntry $f | Should -BeNullOrEmpty
     }
 
-    It 'takes the block for the AI agents out, when it removes the last installation' {
+    It 'takes the block for the AI agents out, when it removes the last installation' -Skip:$RealInstall {
         $f = New-InstallFolders
         $claude = Join-Path $f.Base 'claude'
         New-Item -ItemType Directory -Path $claude | Out-Null
@@ -1655,7 +1774,7 @@ Describe 'setup\uninstall.ps1 in <Shell>' -ForEach $Shells {
         @(Get-ChildItem $script:LastTemp -Force).Count | Should -Be 0
     }
 
-    It 'goes on when wslbin.exe is in use, ends with exit code 1 and a warning, keeps the entry in Apps and the hooks of the program that stays' {
+    It 'goes on when wslbin.exe is in use, ends with exit code 1 and a warning, keeps the entry in Apps and the hooks of the program that stays' -Skip:$RealInstall {
         $f = New-InstallFolders
         New-Item -ItemType Directory -Path (Join-Path $f.Docs 'PowerShell') | Out-Null
         $claude = Join-Path $f.Base 'claude'
