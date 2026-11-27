@@ -341,7 +341,7 @@ function Get-ProfileExecutionPolicy([string]$Shell) {
         return $null
     }
     $policy = $read.Result.Trim()
-    if ($policy -notmatch '^[A-Za-z]+$') { return $null }
+    if (-not [regex]::IsMatch($policy, '^[A-Za-z]+\z')) { return $null }
     $policy
 }
 
@@ -760,7 +760,7 @@ function Read-Manifest([string]$PackageDir) {
         if (-not (Test-PackagePath $relative)) { throw "manifest.json names a path that is not inside the package: '$relative'." }
         $file = Join-Path $PackageDir $relative
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "manifest.json names $relative, and it is not in the package." }
-        if ([string]$entry.sha256 -notmatch '^[0-9A-Fa-f]{64}\z') { throw "manifest.json has no SHA256 for $relative." }
+        if (-not [regex]::IsMatch([string]$entry.sha256, '^[0-9A-Fa-f]{64}\z')) { throw "manifest.json has no SHA256 for $relative." }
         Test-FileHash $file ([string]$entry.sha256)
         $relative = $relative.Replace('/', '\')
         $files.Add($relative)
