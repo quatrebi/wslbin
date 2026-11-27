@@ -1512,6 +1512,8 @@ Describe 'setup\uninstall.ps1, its functions in this process' {
     }
 
     It 'takes the folder out of PATH only when the installer put it there' {
+        # not elevated: the real rights of the runner (administrator, UAC on) would refuse a per-user installation
+        function Test-Administrator { $false }
         foreach ($case in @(@{ Added = 0; Expected = 'C:\Windows;{0}' }, @{ Added = 1; Expected = 'C:\Windows' })) {
             $f = New-InstallFolders
             (Install-Test 'pwsh' (New-Package) $f).ExitCode | Should -Be 0
@@ -1548,6 +1550,8 @@ Describe 'setup\uninstall.ps1, its functions in this process' {
         $f = New-InstallFolders
         (Install-Test 'pwsh' (New-Package) $f).ExitCode | Should -Be 0
         $null = & (Join-Path $f.Install 'wslbin.exe') --internal-link alpha
+        # not elevated: the real rights of the runner (administrator, UAC on) would refuse a per-user installation
+        function Test-Administrator { $false }
         function Invoke-Native { throw 'a program of the folder was run' }
         function Invoke-WslbinStep { throw 'a program of the folder was run' }
         $UninstallKey = $f.Key; $NoPath = $true; $Purge = $false
