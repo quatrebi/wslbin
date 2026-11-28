@@ -383,6 +383,35 @@ Describe 'the workflows' {
             $script:Pages | Should -Match '(?m)^  workflow_call:\n    outputs:\n      page_url:\n        value: \$\{\{ jobs\.deploy\.outputs\.page_url \}\}\n'
             (Get-JobText $script:Pages 'deploy') | Should -Match 'page_url: \$\{\{ steps\.deployment\.outputs\.page_url \}\}'
         }
+        It 'still runs on a change of the site on main, and by hand' {
+            $script:Pages | Should -Match "(?m)^  push:\n    branches: \[main\]\n    paths:\n      - 'site/\*\*'"
+            $script:Pages | Should -Match '(?m)^  workflow_dispatch:'
+            $script:Pages | Should -Match "(?m)^      - 'llms\.txt'$"
+        }
+        It 'puts releases.json next to the page, made by the script of the repository, with the token in env' {
+            $build = Get-JobText $script:Pages 'build'
+            $build | Should -Match 'new-releases-json\.ps1'
+            $build | Should -Match 'GH_TOKEN: \$\{\{ github\.token \}\}'
+            $build | Should -Match 'path: _site'
+            $build | Should -Not -Match ': write'
+        }
+        It 'publishes the files of the site by name: the landing page, the loader, the sitemap, the 404 page and llms.txt, not a draft in site/' {
+            $build = Get-JobText $script:Pages 'build'
+            $m = [regex]::Match($build, "foreach \(\`$file in ([^)]+)\)")
+            $m.Success | Should -BeTrue
+            $names = @([regex]::Matches($m.Groups[1].Value, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value }) | Sort-Object
+            $names | Should -Be (@('404.html', 'index.html', 'install.ps1', 'sitemap.xml') | Sort-Object)
+            $build | Should -Match 'Copy-Item -LiteralPath llms\.txt -Destination _site'
+            $build | Should -Not -Match 'site/\*|site\\\*'
+            $build | Should -Not -Match 'v2\.html'
+        }
+        It 'may write Pages only in the job that deploys' {
+            (Get-JobText $script:Pages 'deploy') | Should -Match 'pages: write\n      id-token: write'
+            ([regex]::Matches($script:Pages, 'pages: write')).Count | Should -Be 1
+        }
+        It 'does not let two deployments run at once' {
+            $script:Pages | Should -Match '(?m)^concurrency:\n  group: pages\n  cancel-in-progress: false\n'
+        }
     }
 }
 
