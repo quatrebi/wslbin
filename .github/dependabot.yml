@@ -1,6 +1,7 @@
-# Keeps the actions of the workflows up to date. They are pinned to commits (the comment names the tag);
-# Dependabot proposes the new commit and tag in a pull request. The nuget ecosystem is added with the
-# test project of .NET, when there are PackageReferences to watch.
+# Keeps the actions of the workflows and the NuGet packages of the tests up to date. The actions are pinned to
+# commits (the comment names the tag); Dependabot proposes the new commit and tag in a pull request. The program
+# itself has no NuGet package: the packages are the test projects' (tests/Directory.Packages.props), which pins the
+# whole of Microsoft.Testing.Platform to one version, so the packages of that family are proposed together.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -11,3 +12,16 @@ updates:
     commit-message:
       prefix: "ci(github)"
     open-pull-requests-limit: 5
+  - package-ecosystem: nuget
+    directory: /tests
+    target-branch: develop
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "test(deps)"
+    open-pull-requests-limit: 5
+    groups:
+      testing-platform:
+        patterns:
+          - "Microsoft.Testing.*"
+          - "xunit.v3*"

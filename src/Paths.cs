@@ -78,7 +78,9 @@ internal static class Paths
             if (name is "" or "." or "..") continue;
             if (char.IsWhiteSpace(name[0]) || char.IsWhiteSpace(name[^1]) || name[^1] == '.') return false;
         }
-        if (!File.Exists(s) && !Directory.Exists(s)) return false;
+        // (against the current folder of the host, which is the one of this process in wslbin.exe)
+        string full = Path.Combine(Folder.Current() ?? "", s);
+        if (!File.Exists(full) && !Directory.Exists(full)) return false;
 
         result = s.Replace('\\', '/');
         return true;
@@ -98,9 +100,7 @@ internal static class Paths
 
     // The distribution that wslbin runs in: the one in wslbin.ini, or else the default one (null when
     // the registry does not say). The registry is read once a run, however many arguments ask.
-    public static string? RunsIn(Config cfg) => cfg.Distro.Length > 0 ? cfg.Distro : DefaultDistribution.Value;
-
-    static readonly Lazy<string?> DefaultDistribution = new(() => WslQuery.DefaultDistribution());
+    public static string? RunsIn(Config cfg) => cfg.Distro.Length > 0 ? cfg.Distro : Host.Current.DefaultDistribution();
 
     // The value of a variable from pass_env: a path, or a list of paths separated by ";".
     // Lists become ":"-separated, as PATH is on Linux, and only when every item is a path.

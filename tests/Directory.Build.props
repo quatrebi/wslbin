@@ -1,0 +1,26 @@
+<Project>
+
+  <!-- Everything of the repository (LangVersion, Nullable, analyzers, TreatWarningsAsErrors) applies here too. -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- no runtime packs are needed to run the tests: the test programs use the shared runtime -->
+    <DisableTransitiveFrameworkReferenceDownloads>true</DisableTransitiveFrameworkReferenceDownloads>
+    <!-- the tests of the project are the quality gate: every rule of the build applies to them as well -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!--
+    Banned APIs: tests only. The program (wslbin.csproj) has no package at all; the same sources are checked here
+    through tests\Wslbin.Testable, which names tests\BannedSymbols.Src.txt (that file is what keeps the program
+    behind IHost). Every other project here is checked against tests\BannedSymbols.Tests.txt.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.Tests.txt"
+                     Condition="'$(MSBuildProjectName)' != 'Wslbin.Testable'" />
+    <Using Include="Xunit" Condition="'$(MSBuildProjectName)' != 'Wslbin.Testable' And '$(MSBuildProjectName)' != 'FakeWsl'" />
+  </ItemGroup>
+
+</Project>

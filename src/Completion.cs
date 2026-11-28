@@ -43,7 +43,7 @@ internal static class Completion
         catch (Exception ex)
         {
             // Tab must stay quiet whatever goes wrong: a folder that cannot be read, no WSL, a bug
-            if (Environment.GetEnvironmentVariable("WSLBIN_DEBUG") == "1") Out.Fail(ex.ToString());
+            if (Host.Current.GetEnv("WSLBIN_DEBUG") == "1") Out.Fail(ex.ToString());
         }
         if (result.Count > 0) Out.Info(string.Join('\n', result));
         return 0;

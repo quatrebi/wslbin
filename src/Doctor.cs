@@ -1,7 +1,5 @@
 // wslbin: --doctor.
 
-using Microsoft.Win32;
-
 namespace Wslbin;
 
 // --doctor: lines "[ ok ]", "[warn]" and "[FAIL]", each problem with a "fix:" line.
@@ -58,8 +56,8 @@ internal static class Doctor
 
     static string InstallType(string dir)
     {
-        string? localAppData = Environment.GetEnvironmentVariable("LOCALAPPDATA");
-        if (IsUnder(dir, Environment.GetEnvironmentVariable("ProgramFiles")) || IsUnder(dir, Environment.GetEnvironmentVariable("ProgramFiles(x86)")))
+        string? localAppData = Host.Current.GetEnv("LOCALAPPDATA");
+        if (IsUnder(dir, Host.Current.GetEnv("ProgramFiles")) || IsUnder(dir, Host.Current.GetEnv("ProgramFiles(x86)")))
             return "system (needs administrator rights to change wrappers)";
         if (localAppData != null && IsUnder(dir, Path.Combine(localAppData, "Programs"))) return "user";
         return $"portable (run from {dir})";
@@ -169,15 +167,15 @@ internal static class Doctor
     static void CheckPath(Report report, string exePath)
     {
         string dir = Path.GetDirectoryName(exePath)!;
-        if (SearchPath.Contains(Environment.GetEnvironmentVariable("PATH"), dir))
+        if (SearchPath.Contains(Host.Current.GetEnv("PATH"), dir))
         {
             report.Ok("the folder is in PATH");
         }
         else
         {
             string? where =
-                SearchPath.Contains(ReadRegistryPath(Registry.CurrentUser, "Environment"), dir) ? "user" :
-                SearchPath.Contains(ReadRegistryPath(Registry.LocalMachine, @"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"), dir) ? "system" :
+                SearchPath.Contains(Host.Current.RegistryPath(machine: false), dir) ? "user" :
+                SearchPath.Contains(Host.Current.RegistryPath(machine: true), dir) ? "system" :
                 null;
             if (where != null)
             {
@@ -210,20 +208,6 @@ internal static class Doctor
                 ? $"another wslbin is in PATH: {found} (this one comes first)"
                 : $"another wslbin comes first in PATH: {found}, so \"wslbin\" in a terminal starts that one");
             report.Hint("fix: uninstall the copy that is not wanted (Settings > Apps), or take its folder out of PATH");
-        }
-    }
-
-    static string ReadRegistryPath(RegistryKey root, string subKey)
-    {
-        try
-        {
-            using RegistryKey? key = root.OpenSubKey(subKey);
-            string? value = key?.GetValue("Path", "", RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
-            return Environment.ExpandEnvironmentVariables(value ?? "");
-        }
-        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
-        {
-            return "";
         }
     }
 

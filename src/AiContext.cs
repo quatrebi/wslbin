@@ -63,7 +63,7 @@ internal static class AiContext
         // usual place in the home folder. (Claude Code: CLAUDE_CONFIG_DIR, else ~/.claude; Codex:
         // CODEX_HOME, else ~/.codex.) Without a home folder, ".claude" would be a folder relative to
         // wherever this runs.
-        string? home = Environment.GetEnvironmentVariable("USERPROFILE");
+        string? home = Host.Current.GetEnv("USERPROFILE");
         List<Target> targets = [];
         if (!onlyCodex || onlyClaude)
             targets.Add(new("Claude Code", "--claude-dir", claudeDir ?? EnvOr("CLAUDE_CONFIG_DIR", InHome(home, ".claude")), claudeDir != null, false));
@@ -116,7 +116,7 @@ internal static class AiContext
     }
 
     static string? EnvOr(string variable, string? fallback) =>
-        Environment.GetEnvironmentVariable(variable) is { Length: > 0 } value ? value : fallback;
+        Host.Current.GetEnv(variable) is { Length: > 0 } value ? value : fallback;
 
     static string? InHome(string? home, string folder) => string.IsNullOrEmpty(home) ? null : Path.Combine(home, folder);
 

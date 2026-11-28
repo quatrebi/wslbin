@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests that need a real WSL distribution (and, for some, a terminal or Clink). They run on a machine of a person
+    (dotnet test, project tests/Wslbin.Tests.E2E), not in CI, and skip themselves without WSL.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>Wslbin.Tests</RootNamespace>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CrashDump" />
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- the program is built and run as in the integration tests -->
+    <Compile Include="..\Wslbin.Tests.Integration\Shared\ExeFixture.cs" Link="Shared\ExeFixture.cs" />
+    <Compile Include="..\Wslbin.Tests.Integration\Shared\Runner.cs" Link="Shared\Runner.cs" />
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>RepositoryRoot</_Parameter1>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>FakeWslExe</_Parameter1>
+      <_Parameter2>not used by these tests</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

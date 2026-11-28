@@ -10,7 +10,7 @@ internal static class Folder
     // The folder this process runs in, or null in the unlikely case that it cannot be read.
     public static string? Current()
     {
-        try { return Directory.GetCurrentDirectory(); }
+        try { return Host.Current.GetCurrentDirectory(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 

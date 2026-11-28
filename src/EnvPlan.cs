@@ -1,7 +1,6 @@
 // wslbin: Windows variables for Linux programs, through WSLENV.
 
 using System.Buffers;
-using System.Collections;
 using System.Diagnostics;
 using System.IO.Enumeration;
 
@@ -31,7 +30,7 @@ internal sealed class EnvPlan
         var plan = new EnvPlan();
         if (cfg.PassEnv.Count == 0) return plan;
 
-        string existing = Environment.GetEnvironmentVariable("WSLENV") ?? "";
+        string existing = Host.Current.GetEnv("WSLENV") ?? "";
         var listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string item in existing.Split(':'))
         {
@@ -41,8 +40,8 @@ internal sealed class EnvPlan
         }
 
         var candidates = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (DictionaryEntry e in Environment.GetEnvironmentVariables())
-            candidates[(string)e.Key] = (string?)e.Value ?? "";
+        foreach ((string key, string value) in Host.Current.GetEnvironment())
+            candidates[key] = value;
 
         List<string> entries = [];
         foreach ((string name, string value) in candidates)

@@ -7,8 +7,12 @@
 # The version of a build is worked out from git (get-version.ps1), so that a push to a branch, a pull
 # request and a release never share one. The program is kept as an artifact for 14 days, before the tests
 # run, so that a red test run still leaves it. The tests take that very program (WSLBIN_TEST_EXE) instead
-# of building their own. The tests that need WSL do not run here (the runners have none); the escaping is
-# still checked by the Git Bash that the runners have.
+# of building their own. What runs, in this order: the unit tests (xUnit v3 on Microsoft.Testing.Platform, with
+# the coverage of src/ that tests/coverage-gate.ps1 holds at 75 %), the integration tests (the program as a
+# process, escaping checked by the Git Bash that the runners have: WSLBIN_REQUIRE_TOOLS=1 makes a runner without
+# it a failure and not a skipped test), and Pester 6.2.0 for the PowerShell scripts (installer, versions,
+# workflows, documents). The end-to-end tests, which need WSL, do not run here: the runners have none.
+# Reports, coverage and dumps are kept as an artifact, also when a test fails.
 #
 # What anyone can choose (the name of a branch, the number of a pull request) reaches the scripts through
 # env: only, never pasted into the text of a run:; tests/workflows.Tests.ps1 checks that. The actions are
@@ -36,6 +40,12 @@ jobs:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: windows-latest
     timeout-minutes: 60
+    env:
+      # no telemetry, no banner; a missing Git Bash is a failure of the escaping tests, not a skip
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      WSLBIN_REQUIRE_TOOLS: '1'
     steps:
       # the whole history, because PATCH of the version is counted from it; for a pull request the head
       # of its branch, not the merge commit that GitHub makes (it will not exist after the merge)
@@ -53,7 +63,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', 'wslbin.csproj', 'Directory.Build.props', 'nuget.config') }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', 'wslbin.csproj', 'Wslbin.Sources.props', 'Directory.Build.props', 'nuget.config', 'tests/Directory.Packages.props', 'tests/**/*.csproj') }}
 
       - name: Version of this build
         id: version
@@ -95,26 +105,60 @@ jobs:
           if-no-files-found: error
           overwrite: true   # a re-run of the same run number has the same name
 
-      - name: Pester 5 or later
+      - name: The program for the tests (a copy outside bin\, which a build may write)
         shell: pwsh
         run: |
-          if (-not (Get-Module -ListAvailable Pester | Where-Object { $_.Version -ge [version]'5.0.0' })) {
-            Install-Module Pester -MinimumVersion 5.0.0 -Scope CurrentUser -Force -SkipPublisherCheck
-          }
-
-      - name: Test (everything not tagged WSL) on the program that was built
-        shell: pwsh
-        run: |
-          # every test file takes this program instead of building its own (the tests of the build and of the
-          # stand-in wsl.exe still build theirs); a copy outside bin\, which a build may write
           $exe = Join-Path $env:RUNNER_TEMP 'wslbin-under-test\wslbin.exe'
           New-Item -ItemType Directory -Path (Split-Path -Parent $exe) -Force | Out-Null
           Copy-Item -LiteralPath bin/wslbin.exe -Destination $exe
           $env:WSLBIN_TEST_EXE = $exe
-          Import-Module Pester -MinimumVersion 5.0.0
+          "WSLBIN_TEST_EXE=$exe" >> $env:GITHUB_ENV
+
+      - name: Unit tests, and the coverage of src/ (at least 75 %)
+        shell: pwsh
+        run: |
+          $reports = Join-Path $PWD 'tests/artifacts'
+          dotnet test --project tests/Wslbin.Tests.Unit `
+            --coverage --coverage-output-format cobertura --coverage-output (Join-Path $reports 'coverage.cobertura.xml') `
+            --coverage-settings (Join-Path $PWD 'tests/coverage.config') `
+            --report-xunit-trx --report-xunit-trx-filename unit.trx --results-directory $reports `
+            --hangdump --hangdump-timeout 10m --crashdump --crash-report-if-supported
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tests/coverage-gate.ps1 -Report (Join-Path $reports 'coverage.cobertura.xml') -Minimum 75
+
+      - name: Integration tests, on the program that was built
+        shell: pwsh
+        run: |
+          dotnet test --project tests/Wslbin.Tests.Integration `
+            --report-xunit-trx --report-xunit-trx-filename integration.trx --results-directory (Join-Path $PWD 'tests/artifacts') `
+            --hangdump --hangdump-timeout 10m --crashdump --crash-report-if-supported
+
+      - name: Pester 6.2.0
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable Pester | Where-Object { $_.Version -eq [version]'6.2.0' })) {
+            Install-Module Pester -RequiredVersion 6.2.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+
+      - name: Scripts, installer, versions, workflows and documents (Pester)
+        shell: pwsh
+        run: |
+          Import-Module Pester -RequiredVersion 6.2.0
           $config = New-PesterConfiguration
-          $config.Run.Path = './tests'
+          $config.Run.Path = './tests/pester'
           $config.Run.Exit = $true
           $config.Filter.ExcludeTag = 'WSL'
           $config.Output.Verbosity = 'Normal'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = './tests/artifacts/pester.xml'
           Invoke-Pester -Configuration $config
+
+      - name: Keep the reports, the coverage and the dumps
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-reports-${{ steps.version.outputs.version }}
+          path: tests/artifacts
+          retention-days: 14
+          if-no-files-found: ignore
+          overwrite: true

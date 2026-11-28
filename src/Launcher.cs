@@ -1,7 +1,6 @@
 // wslbin: starting wsl.exe for a utility: its command line, the console, the exit code.
 
 using System.Buffers;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -13,12 +12,6 @@ namespace Wslbin;
 // touched: the child inherits the console, so TUIs, colours, pipes and Ctrl+C work.
 internal static class Launcher
 {
-    // Set only by the entry point of the test build (tests/FakeWslEntry.cs), which puts a stand-in
-    // for wsl.exe here; wslbin.exe is built without that file and always runs the real one.
-#pragma warning disable CS0649 // assigned by the test build only
-    internal static string? WslPathOverride;
-#pragma warning restore CS0649
-
     // what makes a Windows command-line argument need quotes
     static readonly SearchValues<char> NeedsQuotes = SearchValues.Create(" \t\n\v\"");
 
@@ -27,17 +20,18 @@ internal static class Launcher
         string? problem = Folder.Problem(cfg);
         if (problem != null) throw new WslbinException(problem);
 
+        IHost host = Host.Current;
         var psi = new ProcessStartInfo(FindWsl(), WslArguments(cfg, Folder.Guard(cfg) + script, positional)) { UseShellExecute = false };
         env.ApplyTo(psi);
-        // A wrapper ignores Ctrl+C for good, not only while wsl.exe runs: the event reaches this process
+        // A wrapper ignores Ctrl+C until it ends, not only while wsl.exe runs: the event reaches this process
         // on a thread of its own, possibly after wsl.exe has ended, and must not end it before it hands
         // back the exit code of the utility.
-        Console.CancelKeyPress += (_, e) => e.Cancel = true;
+        using IDisposable ignoreCtrlC = host.IgnoreCtrlC();
         int code = RunInConsole(psi);
 
         // Without WSL, wsl.exe answers with its usage text and an exit code (1 on Windows 10) that a
         // script would take for the utility's own. With no distribution there was no utility.
-        if (code != 0 && !WslQuery.HasDistribution())
+        if (code != 0 && !host.HasDistribution())
         {
             Out.Fail("WSL is not installed, or has no distribution, so wsl.exe answered instead of " +
                      $"running the command (fix: {WslQuery.InstallFix})");
@@ -49,22 +43,12 @@ internal static class Launcher
     // Runs a child that shares the console (a wrapper's utility, apt) and returns its exit code.
     public static int RunInConsole(ProcessStartInfo psi)
     {
+        IHost host = Host.Current;
         // Ctrl+C reaches every process on the console, wsl.exe and the Linux side included. While the
         // child runs, this process must survive it to hand back the child's exit code; afterwards
         // (the next question of --link, say) Ctrl+C stops wslbin again.
-        ConsoleCancelEventHandler survive = (_, e) => e.Cancel = true;
-        Console.CancelKeyPress += survive;
-        try
-        {
-            using Process process = Start(psi);
-            ChildJob.Add(process);
-            process.WaitForExit();
-            return MapExitCode(process.ExitCode);
-        }
-        finally
-        {
-            Console.CancelKeyPress -= survive;
-        }
+        using IDisposable survive = host.IgnoreCtrlC();
+        return MapExitCode(host.RunInConsole(psi));
     }
 
     /// <summary>What a child wrote, and its exit code.</summary>
@@ -73,51 +57,7 @@ internal static class Launcher
     // Runs a child with all three streams its own (input closed at once) and returns what it wrote.
     // A child that has not ended, or whose streams are still held open (by a process it left behind),
     // after timeoutMs is given up on: null.
-    public static Captured? Capture(ProcessStartInfo psi, int timeoutMs)
-    {
-        psi.UseShellExecute = false;
-        psi.CreateNoWindow = true;
-        psi.RedirectStandardInput = true;
-        psi.RedirectStandardOutput = true;
-        psi.RedirectStandardError = true;
-        var watch = Stopwatch.StartNew();
-        using Process process = Start(psi);
-        ChildJob.Add(process);
-        process.StandardInput.Close();
-        Task<byte[]> error = ReadAllAsync(process.StandardError.BaseStream);
-        Task<byte[]> output = ReadAllAsync(process.StandardOutput.BaseStream);
-        if (!process.WaitForExit(timeoutMs) || !Task.WaitAll([output, error], Remaining(watch, timeoutMs)))
-        {
-            // (the process only: Kill(entireProcessTree) would add a third of a megabyte to every
-            // wrapper, and ChildJob ends wsl.exe with wslbin anyway)
-            try { process.Kill(); }
-            catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) { }
-            return null;
-        }
-        return new Captured(process.ExitCode, output.Result, error.Result);
-    }
-
-    static int Remaining(Stopwatch watch, int timeoutMs) =>
-        timeoutMs == Timeout.Infinite ? Timeout.Infinite : Math.Max(0, timeoutMs - (int)watch.ElapsedMilliseconds);
-
-    static async Task<byte[]> ReadAllAsync(Stream stream)
-    {
-        using var buffer = new MemoryStream();
-        await stream.CopyToAsync(buffer).ConfigureAwait(false);
-        return buffer.ToArray();
-    }
-
-    static Process Start(ProcessStartInfo psi)
-    {
-        try
-        {
-            return Process.Start(psi) ?? throw new WslbinException($"cannot start {psi.FileName}: no process was started");
-        }
-        catch (Win32Exception ex)
-        {
-            throw new WslbinException($"cannot start {psi.FileName}: {ex.Message}");
-        }
-    }
+    public static Captured? Capture(ProcessStartInfo psi, int timeoutMs) => Host.Current.Capture(psi, timeoutMs);
 
     // Exit codes of Linux programs are 0..255 and pass through. wsl.exe reports its own
     // failures (no such distribution, WSL not set up) as -1 or an NTSTATUS: those become 125.
@@ -130,10 +70,12 @@ internal static class Launcher
 
     internal static string FindWsl()
     {
-        if (WslPathOverride != null) return WslPathOverride;
+        IHost host = Host.Current;
+        // a stand-in for wsl.exe: set by the test entry point only, never in wslbin.exe
+        if (host.WslPathOverride != null) return host.WslPathOverride;
         // A 32-bit process would be sent to SysWOW64, which has no wsl.exe.
-        string system32 = !Environment.Is64BitProcess && Environment.Is64BitOperatingSystem ? "Sysnative" : "System32";
-        string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), system32, "wsl.exe");
+        string system32 = host.IsWow64 ? "Sysnative" : "System32";
+        string path = Path.Combine(host.WindowsDirectory, system32, "wsl.exe");
         if (!File.Exists(path))
             throw new WslbinException($"wsl.exe not found, so WSL is not installed (fix: {WslQuery.InstallFix})");
         return path;
@@ -261,26 +203,33 @@ internal static partial class ChildJob
     // Never closed by wslbin: Windows closes it when this process ends, and that is what ends the job.
     // Not inheritable, or wsl.exe would hold it open itself.
     static nint job;
+    // Add may be called from several threads at once (the unit tests run in parallel); one job is made
+    static readonly Lock gate = new();
 
     // A failure here is not an error: the child then does not end with wslbin, as it never used to.
     public static void Add(Process process)
     {
-        if (job == 0)
+        nint handle;
+        lock (gate)
         {
-            nint created = CreateJobObject(0, null);
-            if (created == 0) return;
-            var limits = new ExtendedLimits();
-            limits.Basic.LimitFlags = KillOnJobClose | SilentBreakawayOk;
-            if (!SetInformationJobObject(created, ExtendedLimitInformation, ref limits, Marshal.SizeOf<ExtendedLimits>()))
+            if (job == 0)
             {
-                CloseHandle(created);
-                return;
+                nint created = CreateJobObject(0, null);
+                if (created == 0) return;
+                var limits = new ExtendedLimits();
+                limits.Basic.LimitFlags = KillOnJobClose | SilentBreakawayOk;
+                if (!SetInformationJobObject(created, ExtendedLimitInformation, ref limits, Marshal.SizeOf<ExtendedLimits>()))
+                {
+                    CloseHandle(created);
+                    return;
+                }
+                job = created;
             }
-            job = created;
+            handle = job;
         }
         try
         {
-            AssignProcessToJobObject(job, process.Handle);
+            AssignProcessToJobObject(handle, process.Handle);
         }
         catch (InvalidOperationException)
         {

@@ -29,7 +29,9 @@
 //   Completion.cs       Completion: --complete, Tab completion for the shells
 //   Init.cs             Init: --init pwsh | clink
 //   Text.cs             Text: lines, strict UTF-8, files written all or nothing
-//   Out.cs              Out: console output that does not depend on the console code page
+//   Out.cs              Out: lines of wslbin's own, on standard output and standard error
+//   Host.cs             IHost: what the program takes from the machine (environment, console, registry,
+//                       processes); RealHost is the machine, tests bring a fake one (Host.Use)
 
 using System.Reflection;
 
@@ -136,9 +138,22 @@ internal static class Program
 
     internal static int Main(string[] args)
     {
+        // not Assembly.Location: it is empty in a single-file program
+        string? exePath = Host.Current.ProcessPath;
+        if (exePath == null)
+        {
+            Out.Fail("internal error: the path of the running program is unknown");
+            return ExitCodes.Failed;
+        }
+        return Execute(exePath, args);
+    }
+
+    /// <summary>Runs the program as the file exePath, and turns what goes wrong into a message and an exit code.</summary>
+    internal static int Execute(string exePath, string[] args)
+    {
         try
         {
-            return Run(args);
+            return Run(exePath, args);
         }
         catch (WslbinException ex)
         {
@@ -159,10 +174,8 @@ internal static class Program
         }
     }
 
-    static int Run(string[] args)
+    static int Run(string exePath, string[] args)
     {
-        // not Assembly.Location: it is empty in a single-file program
-        string exePath = Environment.ProcessPath ?? throw new InvalidOperationException("the path of the running program is unknown");
         string exeName = Path.GetFileNameWithoutExtension(exePath);
         var context = new Context(exePath);
 

@@ -1,7 +1,5 @@
 // wslbin: wrapper files, the PATH of Windows, names that Windows uses.
 
-using System.Diagnostics;
-
 namespace Wslbin;
 
 // Wrappers: copies of wslbin.exe, each named after a utility.
@@ -46,17 +44,8 @@ internal static class Wrappers
 
     public static string PathOf(string dir, string name) => Path.Combine(dir, name + ".exe");
 
-    public static bool IsWrapperFile(string path)
-    {
-        try
-        {
-            return FileVersionInfo.GetVersionInfo(path).ProductName == "wslbin";
-        }
-        catch (IOException)
-        {
-            return false;
-        }
-    }
+    // (the ProductName of its version resource: Host.ProductNameOf)
+    public static bool IsWrapperFile(string path) => Host.Current.ProductNameOf(path) == "wslbin";
 
     // Names of the wrappers in dir, sorted. wslbin.exe itself is not one.
     public static List<string> Enumerate(string dir, string exePath)
@@ -138,9 +127,9 @@ internal static class SearchPath
     // Every <name><PATHEXT> in PATH outside skipDir (null: none skipped), in the order of PATH.
     public static IEnumerable<string> FindAll(string name, string? skipDir)
     {
-        string? pathext = Environment.GetEnvironmentVariable("PATHEXT");
+        string? pathext = Host.Current.GetEnv("PATHEXT");
         string[] extensions = (string.IsNullOrEmpty(pathext) ? ".COM;.EXE;.BAT;.CMD" : pathext).Split(';', StringSplitOptions.RemoveEmptyEntries);
-        foreach (string dir in Folders(Environment.GetEnvironmentVariable("PATH")))
+        foreach (string dir in Folders(Host.Current.GetEnv("PATH")))
         {
             if (skipDir != null && SameFolder(dir, skipDir)) continue;
             foreach (string ext in extensions)
