@@ -44,7 +44,7 @@ internal static class WrapperCommands
         }
 
         foreach (string f in failed) Out.Fail(f);
-        if (!dryRun && candidates.Count > 0 && !SearchPath.Contains(Environment.GetEnvironmentVariable("PATH"), dir))
+        if (!dryRun && candidates.Count > 0 && !SearchPath.Contains(Host.Current.GetEnv("PATH"), dir))
             Out.Warn($"{dir} is not in PATH of this terminal, so the wrappers are not found by name yet (see: wslbin --doctor)");
         return failed.Count == 0 ? 0 : ExitCodes.Failed;
     }

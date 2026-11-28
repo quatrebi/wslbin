@@ -3,3 +3,6 @@ bin/
 obj/
 out/
 *.log
+
+# test reports and coverage
+tests/artifacts/

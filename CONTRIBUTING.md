@@ -41,17 +41,39 @@ wslbin --doctor
 
 ## Tests
 
-The tests are Pester 5 in PowerShell 7 (Pester 6 runs them too).
+Four test projects (xUnit v3 on Microsoft.Testing.Platform, run with `dotnet test`) and Pester 6.2.0 for the
+PowerShell scripts. The .NET SDK 10 is all they need; nothing here is a package of the program itself (the
+packages live in `tests/Directory.Packages.props`).
 
 ```powershell
-Invoke-Pester ./tests                              # everything
-Invoke-Pester ./tests -ExcludeTagFilter WSL        # what needs neither WSL nor Clink (this is what CI runs)
+# the program's code, against a fake machine; fast, no WSL; the PR gate is 75 % of the lines of src/
+dotnet test --project tests/Wslbin.Tests.Unit
+
+# the same with the coverage and the gate (what CI runs)
+dotnet test --project tests/Wslbin.Tests.Unit --coverage --coverage-output-format cobertura `
+  --coverage-output "$PWD/tests/artifacts/coverage.cobertura.xml" --coverage-settings "$PWD/tests/coverage.config"
+./tests/coverage-gate.ps1 -Report tests/artifacts/coverage.cobertura.xml -Minimum 75
+
+# the built program as a process (and the escaping, checked by the bash of Git for Windows)
+dotnet test --project tests/Wslbin.Tests.Integration
+
+# a real WSL distribution, a terminal: on a machine of a person only, not in CI
+dotnet test --project tests/Wslbin.Tests.E2E
+
+# the PowerShell scripts: installer, versions, workflows, documents
+Invoke-Pester ./tests/pester
 ```
 
-- Tests that need a real WSL distribution, or Clink, skip themselves when it is not there.
-- Every test file builds the program itself, unless `WSLBIN_TEST_EXE` names a `wslbin.exe` built already.
-  Builds share `obj\` in the repository: never run two builds, or two test runs without `WSLBIN_TEST_EXE`,
-  at once.
+- `tests/Wslbin.Testable` builds `src/*.cs` as a library for the unit tests (the same sources as `wslbin.exe`,
+  listed in `Wslbin.Sources.props`). The program reaches the machine (environment, console, registry, processes)
+  only through `IHost` in `src/Host.cs`; a unit test says which machine it means (`Host.Use(new FakeHost())`).
+  The banned APIs of `tests/BannedSymbols.Src.txt` make the build refuse `Console`, `Environment` and the like in
+  `src/` anywhere else, and `[ExcludeFromCodeCoverage]` everywhere.
+- The integration and E2E tests build the program themselves (`build.ps1`, once per run, under the mutex
+  `Global\wslbin-build`), unless `WSLBIN_TEST_EXE` names a `wslbin.exe` built already: CI builds once and sets it.
+  Never run two builds at once: they share `obj\` in the repository.
+- A missing Git Bash or PowerShell skips the tests that need it; `WSLBIN_REQUIRE_TOOLS=1` (CI) makes that a failure.
+- Set `DOTNET_CLI_TELEMETRY_OPTOUT=1` and `TESTINGPLATFORM_TELEMETRY_OPTOUT=1` to keep the test runs from phoning home.
 - Tests must not write outside their own folder (the real `CLAUDE_CONFIG_DIR` and home folder are
   off limits).
 
@@ -78,12 +100,14 @@ setup/             install.ps1, uninstall.ps1 and what they share: they go into 
 site/              the site (GitHub Pages): the landing page and install.ps1, the loader
 build.ps1          the build (dotnet publish, Native AOT)
 get-version.ps1    the version of a build; its functions are in Wslbin.Version.psm1
-tests/             Pester tests
+Wslbin.Sources.props  what the program is made of (src, embedded texts), shared with the unit-test library
+wslbin.slnx        the program and the test projects
+tests/             Wslbin.Testable, Wslbin.Tests.Unit / Integration / E2E, FakeWsl (a stand-in for wsl.exe), pester/ (PowerShell scripts)
 .github/workflows/ CI, release and Pages
 llms.txt           the text for AI agents, the same as "wslbin --ai-context"
 README.md, README.ru.md, INSTALL.md, INSTALL.ru.md   the user documentation
 LICENSE            MIT
 ```
 
-The README and `docs/` are tested like code (`tests/help.Tests.ps1`): the same headings in both languages,
+The README and `docs/` are tested like code (`tests/pester/docs.Tests.ps1`): the same headings in both languages,
 only options that exist, closed code blocks. Keep the English and the Russian files in step.

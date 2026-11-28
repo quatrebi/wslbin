@@ -1,9 +1,7 @@
 // wslbin: what wslbin learns about WSL: calls to wsl.exe whose output it reads, and the registry.
 
 using System.Diagnostics;
-using System.Security;
 using System.Text;
-using Microsoft.Win32;
 
 namespace Wslbin;
 
@@ -26,64 +24,16 @@ internal static class WslQuery
     public const string InstallFix = "run 'wsl --install' as administrator";
     public const string NotInstalled = "WSL is not installed (wsl.exe answers with its usage text)";
 
-    // How long a call whose output wslbin reads may take: a WSL that has to start its virtual machine
-    // answers within seconds, one that is stuck never does, and --doctor, --list and --link must not
-    // hang on it. Tab completion waits less (Completion.TimeoutMs). The test build shortens it.
-    internal static int TimeoutMs = 120_000;
-
-    // Whether WSL has a distribution for this user. WSL keeps one registry key each under
-    // HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss, with the name in DistributionName (WSL 1,
-    // WSL 2 and the Store version alike). Asked only after wsl.exe failed. The test build replaces it.
-    internal static Func<bool> HasDistribution = RegistryHasDistribution;
-
-    // The name of the default distribution: the Lxss key names its key in DefaultDistribution. Null
-    // when the registry does not say. The test build replaces it.
-    internal static Func<string?> DefaultDistribution = RegistryDefaultDistribution;
-
-    const string LxssKey = @"Software\Microsoft\Windows\CurrentVersion\Lxss";
-
-    static string? RegistryDefaultDistribution()
-    {
-        try
-        {
-            using RegistryKey? lxss = Registry.CurrentUser.OpenSubKey(LxssKey);
-            if (lxss?.GetValue("DefaultDistribution") is not string { Length: > 0 } id) return null;
-            using RegistryKey? distro = lxss.OpenSubKey(id);
-            return distro?.GetValue("DistributionName") as string;
-        }
-        catch (Exception ex) when (ex is SecurityException or UnauthorizedAccessException or IOException)
-        {
-            return null;
-        }
-    }
-
-    // A registry that cannot be read says nothing, and then the exit code of the utility stands.
-    static bool RegistryHasDistribution()
-    {
-        try
-        {
-            using RegistryKey? lxss = Registry.CurrentUser.OpenSubKey(LxssKey);
-            if (lxss == null) return false;
-            foreach (string name in lxss.GetSubKeyNames())
-            {
-                using RegistryKey? distro = lxss.OpenSubKey(name);
-                if (distro?.GetValue("DistributionName") is string) return true;
-            }
-            return false;
-        }
-        catch (Exception ex) when (ex is SecurityException or UnauthorizedAccessException or IOException)
-        {
-            return true;
-        }
-    }
+    // How long a call whose output wslbin reads may take, and what the registry says about the
+    // distributions of WSL, are the host's to say (IHost.QueryTimeoutMs, HasDistribution, DefaultDistribution).
 
     // bash -c <script> in the configured distribution. With positional parameters the first becomes
     // $0, the next $1, ... A call that takes longer than timeoutMs (default: TimeoutMs) is an error.
     public static WslResult RunBash(Config cfg, string script, IList<string>? positional = null, int? timeoutMs = null) =>
-        Capture(Launcher.WslArguments(cfg, script, positional ?? []), timeoutMs ?? TimeoutMs);
+        Capture(Launcher.WslArguments(cfg, script, positional ?? []), timeoutMs ?? Host.Current.QueryTimeoutMs);
 
     // wsl.exe's own commands, like -l -v.
-    public static WslResult RunWsl(string arguments) => Capture(arguments, TimeoutMs);
+    public static WslResult RunWsl(string arguments) => Capture(arguments, Host.Current.QueryTimeoutMs);
 
     static WslResult Capture(string arguments, int timeoutMs)
     {
@@ -221,7 +171,7 @@ internal static class WslQuery
         WslResult r;
         try
         {
-            r = RunBash(cfg, script, timeoutMs: Math.Min(TimeoutMs, 10_000));
+            r = RunBash(cfg, script, timeoutMs: Math.Min(Host.Current.QueryTimeoutMs, 10_000));
         }
         catch (WslbinException)
         {

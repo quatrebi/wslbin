@@ -24,7 +24,7 @@ internal static class Apt
             Out.Info($"would run: {command}");
             return null;
         }
-        bool go = yes || (IsInteractive() && Confirm($"'{name}' is not installed in WSL. Install the apt package '{package}' now?"));
+        bool go = yes || (Host.Current.IsInteractive && Confirm($"'{name}' is not installed in WSL. Install the apt package '{package}' now?"));
         if (!go)
             return $"not found in WSL; install it with: {command}   (or repeat with --yes)";
 
@@ -44,12 +44,9 @@ internal static class Apt
         return sb.ToString();
     }
 
-    static bool IsInteractive() => !Console.IsInputRedirected && !Console.IsOutputRedirected;
-
     static bool Confirm(string question)
     {
-        Console.Write($"{question} [y/N] ");
-        string? answer = Console.ReadLine()?.Trim();
+        string? answer = Host.Current.Ask(question)?.Trim();
         return answer != null && (answer.Equals("y", StringComparison.OrdinalIgnoreCase) || answer.Equals("yes", StringComparison.OrdinalIgnoreCase));
     }
 }

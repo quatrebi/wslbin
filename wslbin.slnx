@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="wslbin.csproj" />
+  <Folder Name="/tests/">
+    <Project Path="tests/Wslbin.Testable/Wslbin.Testable.csproj" />
+    <Project Path="tests/Wslbin.Tests.Unit/Wslbin.Tests.Unit.csproj" />
+    <Project Path="tests/Wslbin.Tests.Integration/Wslbin.Tests.Integration.csproj" />
+    <Project Path="tests/Wslbin.Tests.E2E/Wslbin.Tests.E2E.csproj" />
+    <Project Path="tests/FakeWsl/FakeWsl.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,31 @@
+<Project>
+
+  <!--
+    What the program is made of: src\*.cs and the texts built into it. Imported by wslbin.csproj (the
+    program, Native AOT) and by tests\Wslbin.Testable (the same sources as a library, for the unit tests),
+    so that the two never differ. The paths start at this file, so they are right in both.
+    This file lives outside tests\ on purpose: the program must not depend on anything under tests\.
+  -->
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)src\**\*.cs" Exclude="$(MSBuildThisFileDirectory)src\obj\**;$(MSBuildThisFileDirectory)src\bin\**" />
+  </ItemGroup>
+
+  <!-- The texts that live in files. The names are the constants of the Resources class in src/Resources.cs. -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)wsl\complete.sh" LogicalName="wslbin.wsl.complete.sh" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)shell\wslbin.ps1" LogicalName="wslbin.shell.wslbin.ps1" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)shell\wslbin.lua" LogicalName="wslbin.shell.wslbin.lua" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)data\native-versions.txt" LogicalName="wslbin.data.native-versions.txt" />
+    <!-- docs\<language>\<file> becomes wslbin.docs.<language>.<file>; one level down only, .txt and .md -->
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)docs\*\*.txt;$(MSBuildThisFileDirectory)docs\*\*.md"
+                      LogicalName="wslbin.docs.$([System.String]::Copy('%(RecursiveDir)').TrimEnd('\').TrimEnd('/')).%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

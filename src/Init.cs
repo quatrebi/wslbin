@@ -94,12 +94,12 @@ internal static class Init
         string? clink = SearchPath.Find("clink", null);
         if (clink == null) return DefaultClinkDirectory();
         // clink is a .bat or .cmd file, so cmd.exe runs it: the one of Windows, named by its full path
-        var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"), $"/c \"\"{clink}\" info\"");
+        var psi = new ProcessStartInfo(Path.Combine(Host.Current.SystemDirectory, "cmd.exe"), $"/c \"\"{clink}\" info\"");
         try
         {
             Launcher.Captured? r = Launcher.Capture(psi, 10_000);
             if (r == null) return DefaultClinkDirectory();
-            foreach (string line in Text.Lines(Console.OutputEncoding.GetString(r.Output)))
+            foreach (string line in Text.Lines(Host.Current.ConsoleOutputEncoding.GetString(r.Output)))
             {
                 int colon = line.IndexOf(':');
                 if (line.StartsWith("state", StringComparison.Ordinal) && colon > 0) return line[(colon + 1)..].Trim();
@@ -112,5 +112,5 @@ internal static class Init
         return DefaultClinkDirectory();
     }
 
-    static string DefaultClinkDirectory() => Path.Combine(Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? "", "clink");
+    static string DefaultClinkDirectory() => Path.Combine(Host.Current.GetEnv("LOCALAPPDATA") ?? "", "clink");
 }

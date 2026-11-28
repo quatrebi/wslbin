@@ -8,8 +8,8 @@ param(
     [string]$Output = (Join-Path $PSScriptRoot 'bin\wslbin.exe'),
     # the version of the program, SemVer 2.0
     [string]$Version,
-    # for the tests only (Initialize-FakeWsl in tests\helpers.ps1): more source files, and the class
-    # whose Main starts the program
+    # for the tests only (tests\Wslbin.Tests.Integration, ExeFixture): more source files, and the class
+    # whose Main starts the program (tests\Wslbin.Tests.Integration\Shared\FakeWslEntry.cs)
     [string[]]$ExtraSource = @(),
     [string]$Main
 )

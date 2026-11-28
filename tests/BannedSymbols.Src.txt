@@ -1,0 +1,13 @@
+# The program (src\) reaches the machine only through IHost (src\Host.cs); src\Host.cs itself is exempt
+# (.editorconfig). A unit test can then run the program against a fake machine, and a test that forgets to
+# say which one fails at once instead of touching the real one.
+T:System.Environment;the environment goes through Host.Current
+T:System.Console;the console goes through Host.Current (or Out)
+T:Microsoft.Win32.Registry;the registry goes through Host.Current
+M:System.IO.Directory.GetCurrentDirectory;the current folder goes through Host.Current
+M:System.Diagnostics.Process.Start(System.Diagnostics.ProcessStartInfo);processes start through Host.Current
+M:System.Diagnostics.Process.Start(System.String);processes start through Host.Current
+M:System.Diagnostics.Process.Start(System.String,System.String);processes start through Host.Current
+T:System.Diagnostics.FileVersionInfo;the product name of a file goes through Host.Current
+# Coverage is measured on what the tests run; a method is not excused from it by an attribute.
+T:System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverageAttribute;do not exclude code from the coverage gate: test it, or delete it

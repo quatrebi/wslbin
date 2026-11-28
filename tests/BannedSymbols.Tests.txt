@@ -1,0 +1,13 @@
+# Process-wide state breaks tests that run in parallel: a test gets its own folder, its own environment
+# (the fake host, or the environment of a child process) and its own streams.
+M:System.Environment.SetEnvironmentVariable(System.String,System.String);use a fake host, or the environment of the child process
+M:System.Environment.SetEnvironmentVariable(System.String,System.String,System.EnvironmentVariableTarget);use a fake host, or the environment of the child process
+M:System.IO.Directory.SetCurrentDirectory(System.String);use the working directory of the child process, or the fake host
+M:System.Console.SetOut(System.IO.TextWriter);capture through the fake host
+M:System.Console.SetError(System.IO.TextWriter);capture through the fake host
+M:System.Console.SetIn(System.IO.TextReader);script the fake host
+M:System.Threading.Thread.Sleep(System.Int32);wait for a condition, not for time
+M:System.Threading.Thread.Sleep(System.TimeSpan);wait for a condition, not for time
+M:System.Threading.Tasks.Task.Delay(System.Int32);wait for a condition, not for time
+M:System.Threading.Tasks.Task.Delay(System.TimeSpan);wait for a condition, not for time
+P:System.DateTime.Now;a test must not depend on the time zone of the machine

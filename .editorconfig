@@ -58,6 +58,10 @@ dotnet_diagnostic.IDE0044.severity = warning
 dotnet_diagnostic.IDE0059.severity = warning
 dotnet_diagnostic.IDE0060.severity = warning
 
+# src/Host.cs is the one file that touches the machine (tests/BannedSymbols.Src.txt bans the APIs elsewhere in src/)
+[src/Host.cs]
+dotnet_diagnostic.RS0030.severity = none
+
 [*.{ps1,psm1}]
 indent_size = 4
 

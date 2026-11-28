@@ -1,50 +1,27 @@
 // wslbin: administrator rights for --link and --unlink.
 
-using System.ComponentModel;
-using System.Diagnostics;
 using System.Text;
 
 namespace Wslbin;
 
 // Writing into C:\Program Files needs administrator rights. wslbin asks for them by starting
-// itself again with the "runas" verb (a UAC prompt) and a hidden command that takes names only.
+// itself again with the "runas" verb (a UAC prompt, Host.RunElevated) and a hidden command that takes names only.
 // The elevated copy prints nothing and takes no file names or paths from the command line, so
 // the caller reads the result from the folder afterwards.
 internal static class Elevation
 {
-    const int Cancelled = 1223;      // ERROR_CANCELLED: UAC was declined
-
     // The exit code of the elevated copy, or null when there was none: the rights were declined,
     // or WSLBIN_NO_ELEVATION=1 says not to ask (scripts and tests never see the UAC prompt).
     public static int? Run(string exePath, string command, IEnumerable<string> names)
     {
-        if (Environment.GetEnvironmentVariable("WSLBIN_NO_ELEVATION") == "1") return null;
+        if (Host.Current.GetEnv("WSLBIN_NO_ELEVATION") == "1") return null;
         var sb = new StringBuilder(command);
         foreach (string name in names)
         {
             sb.Append(' ');
             Launcher.AppendWindowsArg(sb, name);
         }
-        var psi = new ProcessStartInfo(exePath, sb.ToString())
-        {
-            UseShellExecute = true,
-            Verb = "runas",
-            WindowStyle = ProcessWindowStyle.Hidden
-        };
-        try
-        {
-            using Process process = Process.Start(psi) ?? throw new WslbinException("cannot ask for administrator rights: no process was started");
-            process.WaitForExit();
-            return process.ExitCode;
-        }
-        catch (Win32Exception ex) when (ex.NativeErrorCode == Cancelled)
-        {
-            return null;
-        }
-        catch (Win32Exception ex)
-        {
-            throw new WslbinException($"cannot ask for administrator rights: {ex.Message}");
-        }
+        return Host.Current.RunElevated(exePath, sb.ToString());
     }
 
     // Hands the names that this user may not change in dir to the elevated copy (command), then asks
